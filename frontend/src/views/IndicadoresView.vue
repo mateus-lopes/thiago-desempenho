@@ -56,7 +56,7 @@ const chartFunil = computed(() => {
       min: 0, max,
       minSize: '10%', maxSize: '100%',
       gap: 6,
-      left: '5%', width: '90%',
+      left: '20%', width: '60%',
       label: {
         show: true, position: 'inside',
         color: 'white', fontWeight: 600, fontSize: 12,
@@ -380,10 +380,10 @@ const mesLabel = computed(() =>
         <!-- Funil + Taxas -->
         <div class="funil-body">
           <div class="funil-chart-wrap">
-            <div v-if="!temDadosFunil" class="empty-msg" style="height:220px;display:flex;align-items:center;justify-content:center">
+            <div v-if="!temDadosFunil" class="empty-msg" style="height:320px;display:flex;align-items:center;justify-content:center">
               Preencha as ligações para ver o funil
             </div>
-            <VChart v-else :option="chartFunil" style="height:220px" autoresize />
+            <VChart v-else :option="chartFunil" style="height:320px" autoresize />
           </div>
 
           <div class="funil-taxas">
@@ -480,7 +480,7 @@ const mesLabel = computed(() =>
   align-items: center;
 }
 
-.funil-chart-wrap { min-height: 220px; }
+.funil-chart-wrap { min-height: 320px; }
 
 .funil-taxas {
   display: flex;
