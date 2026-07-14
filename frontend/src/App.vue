@@ -15,7 +15,7 @@ function logout() {
 }
 
 const dashboardDropdown = [
-  { to: '/', icon: 'pi-chart-line', label: 'Dashboard', exact: true },
+  { to: '/', icon: 'pi-chart-line', label: 'Visão Geral', exact: true },
   { to: '/anual', icon: 'pi-calendar', label: 'Anual' },
   { to: '/metas', icon: 'pi-flag', label: 'Metas' },
   { to: '/indicadores', icon: 'pi-chart-bar', label: 'Indicadores' },
@@ -98,7 +98,7 @@ if (typeof window !== 'undefined') {
             @click="toggleDashDropdown"
           >
             <i class="pi pi-chart-line" />
-            Dashboard
+            Dashboards
             <i class="pi pi-chevron-down dash-chevron" :class="{ open: showDashDropdown }" />
           </a>
           <div v-if="showDashDropdown" class="dash-dropdown">
