@@ -14,16 +14,36 @@ function logout() {
   router.push('/login')
 }
 
-const navItems = [
+const dashboardDropdown = [
   { to: '/', icon: 'pi-chart-line', label: 'Dashboard', exact: true },
   { to: '/anual', icon: 'pi-calendar', label: 'Anual' },
+  { to: '/metas', icon: 'pi-flag', label: 'Metas' },
+  { to: '/indicadores', icon: 'pi-chart-bar', label: 'Indicadores' },
+]
+
+const navItems = [
+  { to: '/cotacoes', icon: 'pi-file-edit', label: 'Cotações' },
   { to: '/cargas', icon: 'pi-list', label: 'Cargas' },
   { to: '/clientes', icon: 'pi-users', label: 'Clientes' },
   { to: '/motoristas', icon: 'pi-car', label: 'Motoristas' },
-  { to: '/metas', icon: 'pi-flag', label: 'Metas' },
-  { to: '/indicadores', icon: 'pi-chart-bar', label: 'Indicadores' },
-  { to: '/cotacoes', icon: 'pi-file-edit', label: 'Cotações' },
 ]
+
+const dashboardPaths = dashboardDropdown.map(i => i.to)
+const isDashboardActive = computed(() => dashboardPaths.some(p => p === '/' ? route.path === '/' : route.path.startsWith(p)))
+
+const showDashDropdown = ref(false)
+
+function toggleDashDropdown(e: MouseEvent) {
+  e.stopPropagation()
+  showDashDropdown.value = !showDashDropdown.value
+}
+
+function navToDash(item: { to: string }) {
+  router.push(item.to)
+  showDashDropdown.value = false
+}
+
+function fecharDashDropdown() { showDashDropdown.value = false }
 
 function isActive(item: { to: string; exact?: boolean }) {
   return item.exact ? route.path === item.to : route.path.startsWith(item.to)
@@ -53,9 +73,9 @@ function marcarTodasLidas() {
 
 function fecharNotif() { showNotif.value = false }
 
-// Fecha notificações ao clicar fora
+// Fecha dropdowns ao clicar fora
 if (typeof window !== 'undefined') {
-  window.addEventListener('click', fecharNotif)
+  window.addEventListener('click', () => { fecharNotif(); fecharDashDropdown() })
 }
 </script>
 
@@ -69,6 +89,36 @@ if (typeof window !== 'undefined') {
       </div>
 
       <nav class="topbar-nav">
+
+        <!-- Dashboard com dropdown -->
+        <div class="nav-dropdown-wrap" @click.stop>
+          <a
+            class="nav-item nav-item-dropdown"
+            :class="{ active: isDashboardActive }"
+            @click="toggleDashDropdown"
+          >
+            <i class="pi pi-chart-line" />
+            Dashboard
+            <i class="pi pi-chevron-down dash-chevron" :class="{ open: showDashDropdown }" />
+          </a>
+          <div v-if="showDashDropdown" class="dash-dropdown">
+            <a
+              v-for="item in dashboardDropdown"
+              :key="item.to"
+              class="dash-dropdown-item"
+              :class="{ active: isActive(item) }"
+              @click="navToDash(item)"
+            >
+              <i :class="`pi ${item.icon}`" />
+              {{ item.label }}
+            </a>
+          </div>
+        </div>
+
+        <!-- Separador vertical -->
+        <div class="nav-sep" />
+
+        <!-- Itens restantes -->
         <a
           v-for="item in navItems"
           :key="item.to"
@@ -130,6 +180,45 @@ if (typeof window !== 'undefined') {
 </template>
 
 <style scoped>
+/* ── Dashboard dropdown ── */
+.nav-dropdown-wrap { position: relative; flex-shrink: 0; }
+
+.nav-item-dropdown { gap: 6px; padding-right: 10px; }
+
+.dash-chevron {
+  font-size: 9px; margin-left: 2px;
+  transition: transform 0.18s;
+}
+.dash-chevron.open { transform: rotate(180deg); }
+
+.dash-dropdown {
+  position: absolute; top: calc(100% + 8px); left: 0;
+  background: white; border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.05);
+  z-index: 500; overflow: hidden; min-width: 170px;
+  padding: 4px;
+}
+
+.dash-dropdown-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 12px;
+  font-size: 13px; color: #374151; font-weight: 500;
+  border-radius: 7px; cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  text-decoration: none;
+}
+.dash-dropdown-item .pi { font-size: 13px; color: #94a3b8; width: 14px; text-align: center; }
+.dash-dropdown-item:hover { background: #f3e8ff; color: #7c3aed; }
+.dash-dropdown-item:hover .pi { color: #7c3aed; }
+.dash-dropdown-item.active { background: #ede9fe; color: #7c3aed; font-weight: 600; }
+.dash-dropdown-item.active .pi { color: #7c3aed; }
+
+.nav-sep {
+  width: 1px; height: 22px; background: #e2e8f0;
+  align-self: center; flex-shrink: 0; margin: 0 4px;
+}
+
 /* ── Badge de desenvolvimento ── */
 .dev-badge {
   display: inline-flex; align-items: center; gap: 5px;
