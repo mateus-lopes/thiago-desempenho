@@ -431,10 +431,6 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
 
     <!-- Cabeçalho -->
     <div class="page-header">
-      <div>
-        <h1 class="page-title">Cotações</h1>
-        <p class="page-sub">Cotações em negociação — converta para carga quando fechado</p>
-      </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 
         <!-- Filtro por situação -->
