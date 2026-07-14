@@ -15,7 +15,7 @@ function logout() {
 }
 
 const dashboardDropdown = [
-  { to: '/', icon: 'pi-chart-line', label: 'Visão Geral', exact: true },
+  { to: '/', icon: 'pi-objects-column', label: 'Visão Geral', exact: true },
   { to: '/anual', icon: 'pi-calendar', label: 'Anual' },
   { to: '/metas', icon: 'pi-flag', label: 'Metas' },
   { to: '/indicadores', icon: 'pi-chart-bar', label: 'Indicadores' },
