@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
@@ -13,6 +13,10 @@ const BRL = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 const PCT = (v: number) =>
   (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+
+const hora = new Date().getHours()
+const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite'
+const iconeHora = hora < 12 ? 'pi-sun' : hora < 18 ? 'pi-cloud' : 'pi-moon'
 
 const cargas = mockCargas.filter(c => c.data.startsWith('2026-07'))
 
@@ -92,6 +96,18 @@ const chartOption = computed(() => ({
 
 <template>
   <div class="page">
+    <div class="wrap">
+
+    <!-- Saudação -->
+    <div class="greeting-header">
+      <div>
+        <h1 class="greeting-title">
+          <i :class="`pi ${iconeHora} greeting-icon`" />
+          {{ saudacao }}, Thiago!
+        </h1>
+        <p class="greeting-sub">Aqui está o resumo do desempenho de julho.</p>
+      </div>
+    </div>
 
     <!-- KPIs -->
     <div class="kpi-grid">
@@ -199,5 +215,36 @@ const chartOption = computed(() => ({
         </div>
       </div>
     </div>
+
+    </div><!-- /.wrap -->
   </div>
 </template>
+
+<style scoped>
+.wrap { padding: 0 20px; }
+
+.greeting-header {
+  margin-bottom: 24px;
+}
+
+.greeting-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.greeting-icon {
+  font-size: 20px;
+  color: #f59e0b;
+}
+
+.greeting-sub {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+}
+</style>
