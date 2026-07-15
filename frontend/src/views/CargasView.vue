@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
-import { mockCargas, mockClientes, mockMotoristas } from '../mocks/data'
+import { api } from '../services/api'
+import AppLoader from '../components/AppLoader.vue'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 
@@ -67,9 +68,16 @@ function emptyRow(id: number, data: string): Row {
   }
 }
 
-const rows = reactive<Row[]>(
-  mockCargas.map(c => ({
-    id: c.id, data: c.data, cte: c.cte, origem: c.origem, destino: c.destino,
+let tempIdCounter = -1
+function nextTempId() { return tempIdCounter-- }
+
+const rows = reactive<Row[]>([])
+const clientes = ref<{ id: number; nome: string }[]>([])
+const motoristas = ref<{ id: number; nome: string; percentComissao: number }[]>([])
+
+function apiToRow(c: any): Row {
+  return {
+    id: c.id, data: c.data, cte: c.cte ?? '', origem: c.origem ?? '', destino: c.destino ?? '',
     clienteId: c.clienteId, motoristaId: c.motoristaId,
     valorEmpresa: c.valorEmpresa, valorMotorista: c.valorMotorista, valorNf: c.valorNf,
     icmsPercent: +(c.icmsPercent * 100).toFixed(4), coPercent: +(c.coPercent * 100).toFixed(4),
@@ -77,8 +85,22 @@ const rows = reactive<Row[]>(
     diasPagamento: c.diasPagamento, percentComissao: +(c.percentComissao * 100).toFixed(4),
     status: c.status, canhotoPago: c.canhotoPago,
     comissaoValor: c.comissaoValor, lucro: c.lucro, percentRentabilidade: c.percentRentabilidade,
-  }))
-)
+  }
+}
+
+function rowToApiPayload(row: Row) {
+  return {
+    data: row.data, cte: row.cte || undefined, origem: row.origem || undefined,
+    destino: row.destino || undefined,
+    clienteId: row.clienteId!, motoristaId: row.motoristaId!,
+    valorEmpresa: row.valorEmpresa!, valorMotorista: row.valorMotorista!,
+    valorNf: row.valorNf ?? row.valorEmpresa!,
+    seguroPercent: row.seguroPercent / 100, icmsPercent: row.icmsPercent / 100,
+    coPercent: row.coPercent / 100, impostoPercent: row.impostoPercent / 100,
+    diasPagamento: row.diasPagamento, percentComissao: row.percentComissao / 100,
+    status: row.status, canhotoPago: row.canhotoPago,
+  }
+}
 
 function recalc(row: Row) {
   const ve = row.valorEmpresa ?? 0; const vm = row.valorMotorista ?? 0; const vn = row.valorNf ?? 0
@@ -93,7 +115,6 @@ function recalc(row: Row) {
   row.comissaoValor = comissao; row.lucro = lucro; row.percentRentabilidade = lucro / ve
 }
 
-function nextId() { return Math.max(0, ...rows.map(r => r.id)) + 1 }
 const today = () => new Date().toISOString().split('T')[0]
 
 // ── Célula ativa ──────────────────────────────────────────────────────────
@@ -109,7 +130,25 @@ function activate(rowId: number, col: string) {
   })
 }
 
-function deactivate(row: Row) { recalc(row); activeCell.value = null }
+async function deactivate(row: Row) {
+  recalc(row)
+  activeCell.value = null
+  if (!row.clienteId || !row.motoristaId || !row.valorEmpresa || !row.valorMotorista) return
+  try {
+    if (row.id < 0) {
+      const { data } = await api.post('/cargas', rowToApiPayload(row))
+      row.id = data.id
+      row.comissaoValor = data.comissaoValor
+      row.lucro = data.lucro
+      row.percentRentabilidade = data.percentRentabilidade
+    } else {
+      const { data } = await api.put(`/cargas/${row.id}`, rowToApiPayload(row))
+      row.comissaoValor = data.comissaoValor
+      row.lucro = data.lucro
+      row.percentRentabilidade = data.percentRentabilidade
+    }
+  } catch { console.error('Erro ao salvar carga') }
+}
 function isActive(rowId: number, col: string) { return activeCell.value?.rowId === rowId && activeCell.value?.col === col }
 
 function onCellClick(row: Row, col: ColDef) {
@@ -267,7 +306,8 @@ function clearAllFilters() { COLS.forEach(c => { filters[c.key] = '' }) }
 // ── Pipeline de dados ──────────────────────────────────────────────────────
 
 const meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-const mesSelecionado = ref(6)
+const mesSelecionado = ref(new Date().getMonth())
+const anoSelecionado = ref(new Date().getFullYear())
 
 function filterRow(row: Row, col: ColDef, fv: string): boolean {
   if (!fv) return true
@@ -326,34 +366,39 @@ const totais = computed(() => {
 // ── Operações de linha ─────────────────────────────────────────────────────
 
 function addRow() {
-  const id = nextId(); const d = today()
+  const id = nextTempId(); const d = today()
   rows.push(emptyRow(id, d))
+  anoSelecionado.value = new Date().getFullYear()
   mesSelecionado.value = new Date().getMonth()
   nextTick(() => activate(id, 'data'))
 }
 
-function deleteRow(id: number) {
-  const i = rows.findIndex(r => r.id === id); if (i !== -1) rows.splice(i, 1)
+async function deleteRow(id: number) {
+  const i = rows.findIndex(r => r.id === id); if (i === -1) return
+  rows.splice(i, 1)
   if (activeCell.value?.rowId === id) activeCell.value = null
+  if (id > 0) {
+    try { await api.delete(`/cargas/${id}`) } catch { console.error('Erro ao excluir carga') }
+  }
 }
 
 function insertRowAbove(rowId: number) {
   const i = rows.findIndex(r => r.id === rowId); if (i === -1) return
-  const id = nextId(); const ref = rows[i]
+  const id = nextTempId(); const ref = rows[i]
   rows.splice(i, 0, emptyRow(id, ref.data))
   hideCtx(); nextTick(() => activate(id, 'data'))
 }
 
 function insertRowBelow(rowId: number) {
   const i = rows.findIndex(r => r.id === rowId); if (i === -1) return
-  const id = nextId(); const ref = rows[i]
+  const id = nextTempId(); const ref = rows[i]
   rows.splice(i + 1, 0, emptyRow(id, ref.data))
   hideCtx(); nextTick(() => activate(id, 'data'))
 }
 
 function duplicateRow(rowId: number) {
   const i = rows.findIndex(r => r.id === rowId); if (i === -1) return
-  const src = rows[i]; const id = nextId()
+  const src = rows[i]; const id = nextTempId()
   rows.splice(i + 1, 0, { ...src, id, cte: src.cte + ' (cópia)' })
   hideCtx(); nextTick(() => activate(id, 'data'))
 }
@@ -444,10 +489,15 @@ function ctxClearCell() {
   hideCtx()
 }
 
-function ctxSetStatus(status: 'entregue' | 'em_andamento') {
+async function ctxSetStatus(status: 'entregue' | 'em_andamento') {
   if (!ctxMenu.value) return
   const row = rows.find(r => r.id === ctxMenu.value!.rowId)
-  if (row) row.status = status
+  if (row) {
+    row.status = status
+    if (row.id > 0) {
+      try { await api.patch(`/cargas/${row.id}/status`, { status }) } catch { console.error('Erro ao atualizar status') }
+    }
+  }
   hideCtx()
 }
 
@@ -503,9 +553,52 @@ function globalKeydown(e: KeyboardEvent) {
 
 function hideAllMenus() { hideCtx(); hideColCtx(); showColRestorePanel.value = false }
 
+const mesSelecionadoStr = computed(() => `${anoSelecionado.value}-${String(mesSelecionado.value + 1).padStart(2, '0')}`)
+
+function selecionarAno(ano: number) {
+  anoSelecionado.value = ano
+  carregarDados()
+}
+
+const carregando = ref(false)
+
+async function carregarDados() {
+  carregando.value = true
+  try {
+    const [cargasRes, clientesRes, motoristasRes] = await Promise.all([
+      api.get(`/cargas?mes=${mesSelecionadoStr.value}`),
+      api.get('/clientes'),
+      api.get('/motoristas'),
+    ])
+    rows.splice(0, rows.length, ...(cargasRes.data as any[]).map(apiToRow))
+    clientes.value = clientesRes.data
+    motoristas.value = motoristasRes.data
+  } finally {
+    carregando.value = false
+  }
+}
+
+async function toggleStatus(row: Row) {
+  const newStatus: 'entregue' | 'em_andamento' = row.status === 'entregue' ? 'em_andamento' : 'entregue'
+  row.status = newStatus
+  if (row.id > 0) {
+    try { await api.patch(`/cargas/${row.id}/status`, { status: newStatus }) } catch { console.error('Erro ao atualizar status') }
+  }
+}
+
+async function toggleCanhoto(row: Row) {
+  row.canhotoPago = !row.canhotoPago
+  if (row.id > 0) {
+    try { await api.patch(`/cargas/${row.id}/status`, { canhotoPago: row.canhotoPago }) } catch { console.error('Erro ao atualizar canhoto') }
+  }
+}
+
+watch(mesSelecionado, carregarDados)
+
 onMounted(() => {
   document.addEventListener('keydown', globalKeydown)
   document.addEventListener('click', hideAllMenus)
+  carregarDados()
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', globalKeydown)
@@ -517,8 +610,8 @@ onUnmounted(() => {
 const BRL = (v: number | null) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const PCT = (v: number) => (v * 100).toFixed(1) + '%'
 const fmtData = (d: string) => { const [, m, day] = d.split('-'); return `${day}/${m}` }
-const nomeCliente = (id: number | null) => mockClientes.find(c => c.id === id)?.nome ?? ''
-const nomeMotorista = (id: number | null) => mockMotoristas.find(m => m.id === id)?.nome ?? ''
+const nomeCliente = (id: number | null) => clientes.value.find(c => c.id === id)?.nome ?? ''
+const nomeMotorista = (id: number | null) => motoristas.value.find(m => m.id === id)?.nome ?? ''
 function rentCor(r: number) { return r >= 0.28 ? 'green' : r >= 0.18 ? 'amber' : 'red' }
 
 function displayVal(row: Row, col: ColDef): string {
@@ -602,40 +695,52 @@ function exportCSV() {
   showToast(`Exportado: cargas_${mes}_2026.csv`)
 }
 
-function salvarModal() {
+async function salvarModal() {
   if (!calc.value || form.clienteId == null || form.motoristaId == null) return
-  const c = calc.value; const id = nextId()
-  rows.unshift({
-    id, data: form.dataObj.toISOString().split('T')[0], cte: form.cte,
-    origem: form.origem, destino: form.destino,
+  const payload = {
+    data: form.dataObj.toISOString().split('T')[0],
+    cte: form.cte || undefined, origem: form.origem || undefined, destino: form.destino || undefined,
     clienteId: form.clienteId, motoristaId: form.motoristaId,
-    valorEmpresa: form.valorEmpresa!, valorMotorista: form.valorMotorista!, valorNf: form.valorNf ?? 0,
-    icmsPercent: form.icmsPercent, coPercent: form.coPercent, impostoPercent: form.impostoPercent,
-    seguroPercent: form.seguroPercent, diasPagamento: form.diasPagamento, percentComissao: form.percentComissao,
-    status: 'em_andamento', canhotoPago: false,
-    comissaoValor: c.comissaoValor, lucro: c.lucro, percentRentabilidade: c.rentabilidade,
-  })
-  mesSelecionado.value = new Date(form.dataObj).getMonth()
-  dialogAberto.value = false
+    valorEmpresa: form.valorEmpresa!, valorMotorista: form.valorMotorista!,
+    valorNf: form.valorNf ?? form.valorEmpresa!,
+    seguroPercent: form.seguroPercent / 100, icmsPercent: form.icmsPercent / 100,
+    coPercent: form.coPercent / 100, impostoPercent: form.impostoPercent / 100,
+    diasPagamento: form.diasPagamento, percentComissao: form.percentComissao / 100,
+    status: 'em_andamento' as const, canhotoPago: false,
+  }
+  try {
+    const { data } = await api.post('/cargas', payload)
+    rows.unshift(apiToRow(data))
+    anoSelecionado.value = new Date(form.dataObj).getFullYear()
+    mesSelecionado.value = new Date(form.dataObj).getMonth()
+    dialogAberto.value = false
+  } catch { console.error('Erro ao criar carga') }
 }
 
-const opcoesCliente = mockClientes.map(c => ({ label: c.nome, value: c.id }))
-const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id }))
+const opcoesCliente = computed(() => clientes.value.map(c => ({ label: c.nome, value: c.id })))
+const opcoesMotorista = computed(() => motoristas.value.map(m => ({ label: m.nome, value: m.id })))
 const opcoesTipoEntrega = ['CIF', 'FOB'].map(v => ({ label: v, value: v }))
 const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ label: v, value: v }))
 </script>
 
 <template>
-  <div class="page" @click="hideAllMenus">
+  <div class="page" style="position:relative" @click="hideAllMenus">
+    <AppLoader :loading="carregando" />
 
     <!-- Cabeçalho -->
-    <div class="page-header">
-      <div class="meses-selector">
-        <button
-          v-for="(mes, i) in meses" :key="i"
-          class="mes-btn" :class="{ ativo: mesSelecionado === i }"
-          @click="mesSelecionado = i"
-        >{{ mes }}</button>
+    <div class="page-header" style="align-items:flex-start">
+      <div class="periodo-selector">
+        <div class="ano-toggle">
+          <button class="ano-btn" :class="{ ativo: anoSelecionado === 2025 }" @click="selecionarAno(2025)">2025</button>
+          <button class="ano-btn" :class="{ ativo: anoSelecionado === 2026 }" @click="selecionarAno(2026)">2026</button>
+        </div>
+        <div class="meses-selector">
+          <button
+            v-for="(mes, i) in meses" :key="i"
+            class="mes-btn" :class="{ ativo: mesSelecionado === i }"
+            @click="mesSelecionado = i"
+          >{{ mes }}</button>
+        </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button
@@ -712,13 +817,13 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
               <template v-if="col.type === 'select-cliente'">
                 <select class="filter-input" v-model="filters[col.key]">
                   <option value="">Todos</option>
-                  <option v-for="c in mockClientes" :key="c.id" :value="c.nome.toLowerCase()">{{ c.nome }}</option>
+                  <option v-for="c in clientes" :key="c.id" :value="c.nome.toLowerCase()">{{ c.nome }}</option>
                 </select>
               </template>
               <template v-else-if="col.type === 'select-motorista'">
                 <select class="filter-input" v-model="filters[col.key]">
                   <option value="">Todos</option>
-                  <option v-for="m in mockMotoristas" :key="m.id" :value="m.nome.toLowerCase()">{{ m.nome }}</option>
+                  <option v-for="m in motoristas" :key="m.id" :value="m.nome.toLowerCase()">{{ m.nome }}</option>
                 </select>
               </template>
               <template v-else-if="col.type === 'status'">
@@ -795,7 +900,7 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
 
                 <span v-if="col.type === 'status'"
                   class="status-tag" :class="row.status"
-                  @click.stop="row.status = row.status === 'entregue' ? 'em_andamento' : 'entregue'"
+                  @click.stop="toggleStatus(row)"
                   title="Clique para alternar"
                 >
                   <i :class="row.status === 'entregue' ? 'pi pi-check-circle' : 'pi pi-clock'" style="font-size:10px" />
@@ -805,7 +910,7 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
                 <input v-else-if="col.type === 'checkbox'"
                   type="checkbox" class="canhoto-check"
                   :checked="row.canhotoPago"
-                  @change.stop="row.canhotoPago = !row.canhotoPago"
+                  @change.stop="toggleCanhoto(row)"
                 />
 
                 <span v-else-if="col.type === 'calc-rent'"
@@ -850,7 +955,7 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
                   @blur="deactivate(row)" @keydown.tab="onTab($event, row, col.key)"
                   @keydown.escape.stop="onEscape">
                   <option value="">—</option>
-                  <option v-for="c in mockClientes" :key="c.id" :value="c.id">{{ c.nome }}</option>
+                  <option v-for="c in clientes" :key="c.id" :value="c.id">{{ c.nome }}</option>
                 </select>
 
                 <select v-else-if="col.type === 'select-motorista'" class="cell-input cell-select"
@@ -859,7 +964,7 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
                   @blur="deactivate(row)" @keydown.tab="onTab($event, row, col.key)"
                   @keydown.escape.stop="onEscape">
                   <option value="">—</option>
-                  <option v-for="m in mockMotoristas" :key="m.id" :value="m.id">{{ m.nome }}</option>
+                  <option v-for="m in motoristas" :key="m.id" :value="m.id">{{ m.nome }}</option>
                 </select>
               </template>
             </td>

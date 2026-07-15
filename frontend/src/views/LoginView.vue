@@ -17,21 +17,15 @@ async function entrar() {
   erro.value = "";
   carregando.value = true;
 
-  // TODO: remover bloco abaixo e descomentar o bloco real quando o backend estiver rodando
-  auth.setToken("mock-token-dev");
-  router.push("/");
-  carregando.value = false;
-  return;
-
-  // try {
-  //   const { data } = await api.post("/auth/login", { email: email.value, senha: senha.value });
-  //   auth.setToken(data.token);
-  //   router.push("/");
-  // } catch {
-  //   erro.value = "Email ou senha inválidos.";
-  // } finally {
-  //   carregando.value = false;
-  // }
+  try {
+    const { data } = await api.post("/auth/login", { email: email.value, senha: senha.value });
+    auth.setToken(data.token);
+    router.push("/");
+  } catch {
+    erro.value = "Email ou senha inválidos.";
+  } finally {
+    carregando.value = false;
+  }
 }
 </script>
 

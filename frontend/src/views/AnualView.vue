@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
+import { api } from '../services/api'
+import AppLoader from '../components/AppLoader.vue'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -17,39 +19,56 @@ const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'O
 
 interface ResumoMes { fat: number; com: number; lucro: number; rent: number; cargas: number; parcial?: boolean }
 
-const dados2025: ResumoMes[] = [
-  { fat: 52000,  com: 3900,  lucro: 9100,  rent: 0.175, cargas: 7  },
-  { fat: 58000,  com: 4350,  lucro: 10200, rent: 0.176, cargas: 8  },
-  { fat: 65000,  com: 4900,  lucro: 11700, rent: 0.180, cargas: 9  },
-  { fat: 61000,  com: 4600,  lucro: 10800, rent: 0.177, cargas: 8  },
-  { fat: 74000,  com: 5600,  lucro: 13500, rent: 0.182, cargas: 10 },
-  { fat: 79000,  com: 6000,  lucro: 14600, rent: 0.185, cargas: 11 },
-  { fat: 83000,  com: 6300,  lucro: 15400, rent: 0.186, cargas: 11 },
-  { fat: 88000,  com: 6700,  lucro: 16500, rent: 0.188, cargas: 12 },
-  { fat: 93000,  com: 7100,  lucro: 17800, rent: 0.191, cargas: 13 },
-  { fat: 99000,  com: 7600,  lucro: 19200, rent: 0.194, cargas: 13 },
-  { fat: 108000, com: 8300,  lucro: 21100, rent: 0.195, cargas: 14 },
-  { fat: 102000, com: 7800,  lucro: 19800, rent: 0.194, cargas: 13 },
-]
+const apiDados2025 = ref<ResumoMes[]>([])
+const apiDados2026 = ref<ResumoMes[]>([])
+const carregando = ref(false)
+const CURRENT_MES = new Date().getMonth() + 1
 
-const dados2026: ResumoMes[] = [
-  { fat: 68000,  com: 5100,  lucro: 12800, rent: 0.188, cargas: 9  },
-  { fat: 78000,  com: 5900,  lucro: 14900, rent: 0.191, cargas: 11 },
-  { fat: 88000,  com: 6700,  lucro: 17000, rent: 0.193, cargas: 12 },
-  { fat: 82000,  com: 6200,  lucro: 15700, rent: 0.191, cargas: 11 },
-  { fat: 95000,  com: 7200,  lucro: 18500, rent: 0.195, cargas: 13 },
-  { fat: 112000, com: 8500,  lucro: 22100, rent: 0.197, cargas: 15 },
-  { fat: 129200, com: 6115,  lucro: 35271, rent: 0.273, cargas: 12, parcial: true },
-]
+function parseMeses(data: any): ResumoMes[] {
+  return data.meses.map((m: any) => ({
+    fat: m.faturamento,
+    com: m.comissao,
+    lucro: m.lucro,
+    rent: m.rentabilidadeMedia,
+    cargas: m.totalCargas,
+    parcial: m.mes === CURRENT_MES,
+  }))
+}
 
-const fat2026 = dados2026.reduce((s, d) => s + d.fat, 0)
-const fat2025mesmo = dados2025.slice(0, dados2026.length).reduce((s, d) => s + d.fat, 0)
-const variacao = (fat2026 - fat2025mesmo) / fat2025mesmo
-const com2026 = dados2026.reduce((s, d) => s + d.com, 0)
-const lucro2026 = dados2026.reduce((s, d) => s + d.lucro, 0)
-const melhorIdx = dados2026.slice(0, -1).reduce((best, d, i) => d.fat > dados2026[best].fat ? i : best, 0)
+async function carregar() {
+  carregando.value = true
+  try {
+    const [r25, r26] = await Promise.all([
+      api.get('/dashboard/anual?ano=2025'),
+      api.get('/dashboard/anual?ano=2026'),
+    ])
+    apiDados2025.value = parseMeses(r25.data)
+    apiDados2026.value = parseMeses(r26.data)
+  } finally {
+    carregando.value = false
+  }
+}
 
-const NULL_PAD = Array(12 - dados2026.length).fill(null)
+onMounted(carregar)
+
+const dados2025 = computed(() => apiDados2025.value)
+const dados2026 = computed(() => apiDados2026.value.slice(0, CURRENT_MES))
+const NULL_PAD = computed(() => Array(12 - dados2026.value.length).fill(null))
+
+const fat2026 = computed(() => dados2026.value.reduce((s, d) => s + d.fat, 0))
+const fat2025mesmo = computed(() => dados2025.value.slice(0, dados2026.value.length).reduce((s, d) => s + d.fat, 0))
+const variacao = computed(() => fat2025mesmo.value ? (fat2026.value - fat2025mesmo.value) / fat2025mesmo.value : 0)
+const com2026 = computed(() => dados2026.value.reduce((s, d) => s + d.com, 0))
+const lucro2026 = computed(() => dados2026.value.reduce((s, d) => s + d.lucro, 0))
+const melhorMes = computed(() => {
+  if (dados2026.value.length === 0) return null
+  const completos = dados2026.value.slice(0, -1)
+  if (completos.length === 0) return null
+  const idx = completos.reduce((best, d, i) => d.fat > completos[best].fat ? i : best, 0)
+  return { idx, mes: completos[idx] }
+})
+const periodoLabel = computed(() => `Jan–${MESES[CURRENT_MES - 1]}`)
+const mesAtualNome = computed(() => MESES[CURRENT_MES - 1] + '/2026')
 
 const chartFat = computed(() => ({
   grid: { left: 0, right: 10, bottom: 40, top: 10, containLabel: true },
@@ -76,13 +95,13 @@ const chartFat = computed(() => ({
   series: [
     {
       name: '2025', type: 'bar',
-      data: dados2025.map(d => d.fat),
+      data: dados2025.value.map(d => d.fat),
       itemStyle: { color: '#cbd5e1', borderRadius: [3, 3, 0, 0] },
       barMaxWidth: 24,
     },
     {
       name: '2026', type: 'bar',
-      data: [...dados2026.map(d => d.fat), ...NULL_PAD],
+      data: [...dados2026.value.map(d => d.fat), ...NULL_PAD.value],
       itemStyle: { color: '#7c3aed', borderRadius: [3, 3, 0, 0] },
       barMaxWidth: 24,
     },
@@ -114,13 +133,13 @@ const chartCom = computed(() => ({
   series: [
     {
       name: '2025', type: 'line',
-      data: dados2025.map(d => d.com),
+      data: dados2025.value.map(d => d.com),
       smooth: true, lineStyle: { color: '#94a3b8', width: 2 },
       itemStyle: { color: '#94a3b8' }, symbol: 'circle', symbolSize: 5,
     },
     {
       name: '2026', type: 'line',
-      data: [...dados2026.map(d => d.com), ...NULL_PAD],
+      data: [...dados2026.value.map(d => d.com), ...NULL_PAD.value],
       smooth: true, lineStyle: { color: '#16a34a', width: 2.5 },
       itemStyle: { color: '#16a34a' }, symbol: 'circle', symbolSize: 5,
       areaStyle: { color: 'rgba(22,163,74,0.06)' },
@@ -153,13 +172,13 @@ const chartRent = computed(() => ({
   series: [
     {
       name: '2025', type: 'line',
-      data: dados2025.map(d => +(d.rent * 100).toFixed(1)),
+      data: dados2025.value.map(d => +(d.rent * 100).toFixed(1)),
       smooth: true, lineStyle: { color: '#cbd5e1', width: 2 },
       itemStyle: { color: '#94a3b8' }, symbol: 'circle', symbolSize: 5,
     },
     {
       name: '2026', type: 'line',
-      data: [...dados2026.map(d => +(d.rent * 100).toFixed(1)), ...NULL_PAD],
+      data: [...dados2026.value.map(d => +(d.rent * 100).toFixed(1)), ...NULL_PAD.value],
       smooth: true, lineStyle: { color: '#d97706', width: 2.5 },
       itemStyle: { color: '#d97706' }, symbol: 'circle', symbolSize: 5,
       areaStyle: { color: 'rgba(217,119,6,0.06)' },
@@ -170,12 +189,13 @@ const chartRent = computed(() => ({
 
 <template>
   <div class="page">
-    <div class="wrap">
+    <div class="wrap" style="position:relative">
+      <AppLoader :loading="carregando" />
 
       <div class="page-header">
         <div>
           <div class="page-title">Dashboard Anual</div>
-          <div class="page-sub">Comparativo 2025 vs 2026 · Julho/2026 parcial (13/31 dias)</div>
+          <div class="page-sub">Comparativo 2025 vs 2026 · {{ mesAtualNome }} parcial</div>
         </div>
       </div>
 
@@ -187,12 +207,12 @@ const chartRent = computed(() => ({
             <div class="kpi-icon purple"><i class="pi pi-money-bill" /></div>
           </div>
           <div class="kpi-value">{{ BRL(fat2026) }}</div>
-          <div class="kpi-sub">acumulado Jan–Jul (Jul parcial)</div>
+          <div class="kpi-sub">acumulado {{ periodoLabel }} ({{ MESES[CURRENT_MES - 1] }} parcial)</div>
         </div>
 
         <div class="kpi-card">
           <div class="kpi-top">
-            <div class="kpi-label">vs 2025 (Jan–Jul)</div>
+            <div class="kpi-label">vs 2025 ({{ periodoLabel }})</div>
             <div class="kpi-icon" :class="variacao >= 0 ? 'green' : 'red'">
               <i :class="`pi ${variacao >= 0 ? 'pi-arrow-up' : 'pi-arrow-down'}`" />
             </div>
@@ -209,7 +229,7 @@ const chartRent = computed(() => ({
             <div class="kpi-icon green"><i class="pi pi-wallet" /></div>
           </div>
           <div class="kpi-value" style="color:#16a34a">{{ BRL(com2026) }}</div>
-          <div class="kpi-sub">total acumulado Jan–Jul</div>
+          <div class="kpi-sub">total acumulado {{ periodoLabel }}</div>
         </div>
 
         <div class="kpi-card">
@@ -217,8 +237,8 @@ const chartRent = computed(() => ({
             <div class="kpi-label">Melhor mês (completo)</div>
             <div class="kpi-icon amber"><i class="pi pi-star" /></div>
           </div>
-          <div class="kpi-value" style="color:#d97706">{{ MESES[melhorIdx] }}</div>
-          <div class="kpi-sub">{{ BRL(dados2026[melhorIdx].fat) }} faturados</div>
+          <div class="kpi-value" style="color:#d97706">{{ melhorMes ? MESES[melhorMes.idx] : '—' }}</div>
+          <div class="kpi-sub">{{ melhorMes ? BRL(melhorMes.mes.fat) : 'Aguardando dados' }} faturados</div>
         </div>
       </div>
 
@@ -247,12 +267,12 @@ const chartRent = computed(() => ({
           <thead>
             <tr>
               <th>Mês</th>
-              <th class="col-right">Faturamento</th>
-              <th class="col-right">Comissão</th>
-              <th class="col-right">Lucro</th>
-              <th class="col-right">Rentab.</th>
-              <th class="col-right">Cargas</th>
-              <th class="col-right">vs 2025</th>
+              <th>Faturamento</th>
+              <th>Comissão</th>
+              <th>Lucro</th>
+              <th>Rentab.</th>
+              <th>Cargas</th>
+              <th>vs 2025</th>
             </tr>
           </thead>
           <tbody>
@@ -261,34 +281,38 @@ const chartRent = computed(() => ({
                 {{ MESES[i] }}
                 <span v-if="d.parcial" class="tag-parcial">parcial</span>
               </td>
-              <td class="col-right font-bold">{{ BRL(d.fat) }}</td>
-              <td class="col-right color-green">{{ BRL(d.com) }}</td>
-              <td class="col-right color-blue">{{ BRL(d.lucro) }}</td>
-              <td class="col-right">
+              <td class="font-bold">{{ BRL(d.fat) }}</td>
+              <td class="color-green">{{ BRL(d.com) }}</td>
+              <td class="color-blue">{{ BRL(d.lucro) }}</td>
+              <td>
                 <span class="rent" :class="d.rent >= 0.25 ? 'green' : d.rent >= 0.18 ? 'amber' : 'red'">
                   {{ PCT(d.rent) }}
                 </span>
               </td>
-              <td class="col-right color-muted">{{ d.cargas }}</td>
-              <td class="col-right">
-                <span :class="d.fat >= dados2025[i].fat ? 'color-green' : 'color-red'" style="font-weight:600;font-size:12px">
-                  {{ d.fat >= dados2025[i].fat ? '+' : '' }}{{ PCT((d.fat - dados2025[i].fat) / dados2025[i].fat) }}
-                </span>
+              <td class="color-muted">{{ d.cargas }}</td>
+              <td>
+                <template v-if="dados2025[i]?.fat > 0">
+                  <span :class="d.fat >= dados2025[i].fat ? 'color-green' : 'color-red'" style="font-weight:600;font-size:12px">
+                    {{ d.fat >= dados2025[i].fat ? '+' : '' }}{{ PCT((d.fat - dados2025[i].fat) / dados2025[i].fat) }}
+                  </span>
+                </template>
+                <span v-else class="color-muted">—</span>
               </td>
             </tr>
           </tbody>
           <tfoot>
             <tr>
               <td class="foot-label">Total acumulado</td>
-              <td class="col-right foot-val">{{ BRL(fat2026) }}</td>
-              <td class="col-right foot-com">{{ BRL(com2026) }}</td>
-              <td class="col-right foot-lucro">{{ BRL(lucro2026) }}</td>
-              <td class="col-right foot-rent">{{ PCT(lucro2026 / fat2026) }}</td>
-              <td class="col-right foot-val">{{ dados2026.reduce((s, d) => s + d.cargas, 0) }}</td>
-              <td class="col-right">
-                <span class="color-green" style="font-weight:700;font-size:12px">
-                  +{{ PCT(variacao) }}
+              <td class="foot-val">{{ BRL(fat2026) }}</td>
+              <td class="foot-com">{{ BRL(com2026) }}</td>
+              <td class="foot-lucro">{{ BRL(lucro2026) }}</td>
+              <td class="foot-rent">{{ PCT(lucro2026 / fat2026) }}</td>
+              <td class="foot-val">{{ dados2026.reduce((s, d) => s + d.cargas, 0) }}</td>
+              <td>
+                <span v-if="fat2025mesmo > 0" :class="variacao >= 0 ? 'color-green' : 'color-red'" style="font-weight:700;font-size:12px">
+                  {{ variacao >= 0 ? '+' : '' }}{{ PCT(variacao) }}
                 </span>
+                <span v-else class="color-muted">—</span>
               </td>
             </tr>
           </tfoot>
@@ -337,10 +361,10 @@ const chartRent = computed(() => ({
 .color-muted { color: #64748b; }
 
 .foot-label { font-weight: 600; color: #374151; }
-.foot-val   { font-weight: 700; color: #0f172a; text-align: right; }
-.foot-com   { font-weight: 700; color: #16a34a; text-align: right; }
-.foot-lucro { font-weight: 700; color: #2563eb; text-align: right; }
-.foot-rent  { font-weight: 700; color: #d97706; text-align: right; }
+.foot-val   { font-weight: 700; color: #0f172a; }
+.foot-com   { font-weight: 700; color: #16a34a; }
+.foot-lucro { font-weight: 700; color: #2563eb; }
+.foot-rent  { font-weight: 700; color: #d97706; }
 
 .tag-parcial {
   display: inline-block;

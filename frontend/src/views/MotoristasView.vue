@@ -1,25 +1,16 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
-import { useLocalStorage } from '../composables/useLocalStorage'
-import { mockMotoristas } from '../mocks/data'
+import { api } from '../services/api'
+import AppLoader from '../components/AppLoader.vue'
 
-interface MotoristaLocal {
-  id: number
-  nome: string
-  percentComissao: number
-}
+interface Motorista { id: number; nome: string; percentComissao: number; totalCargas: number }
 
-const defaultMotoristas: MotoristaLocal[] = mockMotoristas.map(m => ({
-  ...m,
-  percentComissao: 0.10,
-}))
-
-const motoristas = useLocalStorage<MotoristaLocal[]>('thiago_motoristas', defaultMotoristas)
-
+const motoristas = ref<Motorista[]>([])
+const carregando = ref(false)
 const showModal = ref(false)
 const isEditing = ref(false)
 const editId = ref<number | null>(null)
@@ -34,6 +25,18 @@ const totalComissaoMedia = computed(() => {
   return motoristas.value.reduce((s, m) => s + m.percentComissao, 0) / motoristas.value.length
 })
 
+async function carregarMotoristas() {
+  carregando.value = true
+  try {
+    const { data } = await api.get('/motoristas')
+    motoristas.value = data
+  } finally {
+    carregando.value = false
+  }
+}
+
+onMounted(carregarMotoristas)
+
 function openNew() {
   isEditing.value = false
   editId.value = null
@@ -42,7 +45,7 @@ function openNew() {
   showModal.value = true
 }
 
-function openEdit(m: MotoristaLocal) {
+function openEdit(m: Motorista) {
   isEditing.value = true
   editId.value = m.id
   form.value = { nome: m.nome, percentComissao: m.percentComissao * 100 }
@@ -50,30 +53,38 @@ function openEdit(m: MotoristaLocal) {
   showModal.value = true
 }
 
-function save() {
+async function save() {
   if (!form.value.nome.trim()) { erro.value = 'Nome obrigatório'; return }
   if (form.value.percentComissao <= 0) { erro.value = 'Comissão deve ser maior que zero'; return }
-
-  const pct = form.value.percentComissao / 100
-
-  if (isEditing.value && editId.value !== null) {
-    const idx = motoristas.value.findIndex(m => m.id === editId.value)
-    if (idx !== -1) motoristas.value[idx] = { id: editId.value, nome: form.value.nome.trim().toUpperCase(), percentComissao: pct }
-  } else {
-    const nextId = motoristas.value.length ? Math.max(...motoristas.value.map(m => m.id)) + 1 : 1
-    motoristas.value.push({ id: nextId, nome: form.value.nome.trim().toUpperCase(), percentComissao: pct })
+  try {
+    const pct = form.value.percentComissao / 100
+    const payload = { nome: form.value.nome.trim().toUpperCase(), percentComissao: pct }
+    if (isEditing.value && editId.value !== null) {
+      await api.put(`/motoristas/${editId.value}`, payload)
+    } else {
+      await api.post('/motoristas', payload)
+    }
+    await carregarMotoristas()
+    showModal.value = false
+  } catch {
+    erro.value = 'Erro ao salvar. Tente novamente.'
   }
-  showModal.value = false
 }
 
-function remove(id: number) {
-  motoristas.value = motoristas.value.filter(m => m.id !== id)
+async function remove(id: number) {
+  try {
+    await api.delete(`/motoristas/${id}`)
+    motoristas.value = motoristas.value.filter(m => m.id !== id)
+  } catch {
+    console.error('Erro ao excluir motorista')
+  }
 }
 </script>
 
 <template>
   <div class="page">
-    <div class="wrap">
+    <div class="wrap" style="position:relative">
+      <AppLoader :loading="carregando" />
 
       <div class="page-header">
         <div>
@@ -92,6 +103,7 @@ function remove(id: number) {
             <tr>
               <th class="col-num">#</th>
               <th>Nome</th>
+              <th>Cargas</th>
               <th>% Comissão Padrão</th>
               <th class="col-actions">Ações</th>
             </tr>
@@ -106,6 +118,10 @@ function remove(id: number) {
                 </div>
               </td>
               <td>
+                <span v-if="m.totalCargas > 0" class="cargas-badge">{{ m.totalCargas }}</span>
+                <span v-else class="color-muted">—</span>
+              </td>
+              <td>
                 <span class="pct-badge">{{ PCT(m.percentComissao) }}</span>
               </td>
               <td class="col-actions">
@@ -118,7 +134,7 @@ function remove(id: number) {
               </td>
             </tr>
             <tr v-if="!motoristas.length">
-              <td colspan="4" class="empty-row">Nenhum motorista cadastrado</td>
+              <td colspan="5" class="empty-row">Nenhum motorista cadastrado</td>
             </tr>
           </tbody>
         </table>
@@ -197,7 +213,19 @@ function remove(id: number) {
 .data-table tbody tr:hover { background: #fafbfc; }
 
 .col-num { width: 48px; color: #94a3b8 !important; font-size: 12px !important; }
+.col-right { text-align: right; }
 .col-actions { width: 88px; text-align: center; }
+.color-muted { color: #94a3b8; }
+
+.cargas-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 99px;
+  background: #f0fdf4;
+  color: #16a34a;
+  font-weight: 700;
+  font-size: 13px;
+}
 
 .motorista-row { display: flex; align-items: center; gap: 10px; }
 .motorista-avatar {

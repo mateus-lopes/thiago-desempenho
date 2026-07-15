@@ -53,7 +53,7 @@ export const cargas = pgTable("cargas", {
   percentRentabilidade: numeric("percent_rentabilidade", { precision: 10, scale: 8 }).notNull(),
 
   status: statusCargaEnum("status").notNull().default("em_andamento"),
-  canhotoEnviado: boolean("canhoto_enviado").notNull().default(false),
+  canhotoPago: boolean("canhoto_enviado").notNull().default(false),
   tipoEntrega: varchar("tipo_entrega", { length: 100 }),
   formaPagamento: varchar("forma_pagamento", { length: 100 }),
   diaPagamento: integer("dia_pagamento"),

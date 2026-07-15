@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+import { numeric, pgTable, serial, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
 
 export const motoristas = pgTable(
   "motoristas",
@@ -8,6 +8,7 @@ export const motoristas = pgTable(
     nome: varchar("nome", { length: 255 }).notNull(),
     nomeNormalizado: varchar("nome_normalizado", { length: 255 }).notNull(),
     telefone: varchar("telefone", { length: 20 }),
+    percentComissao: numeric("percent_comissao", { precision: 8, scale: 6 }).notNull().default("0.1"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({

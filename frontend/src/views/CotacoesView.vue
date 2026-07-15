@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
-import { mockCotacoes, mockClientes, mockMotoristas } from '../mocks/data'
+import { api } from '../services/api'
+import AppLoader from '../components/AppLoader.vue'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 
@@ -65,17 +66,9 @@ function emptyRow(id: number, data: string): Row {
   }
 }
 
-const rows = reactive<Row[]>(
-  mockCotacoes.map(c => ({
-    id: c.id, data: c.data, clienteId: c.clienteId,
-    origem: c.origem, destino: c.destino, km: c.km, tipoVeiculo: c.tipoVeiculo,
-    valorMotorista: c.valorMotorista, valorEmpresa: c.valorEmpresa, valorNf: c.valorNf,
-    icmsPercent: c.icmsPercent, coPercent: c.coPercent, impostoPercent: c.impostoPercent,
-    seguroPercent: c.seguroPercent, diasPagamento: c.diasPagamento, percentComissao: c.percentComissao,
-    comissaoValor: c.comissaoValor, lucro: c.lucro, percentRentabilidade: c.percentRentabilidade,
-    situacao: c.situacao,
-  }))
-)
+const rows = reactive<Row[]>([])
+const clientes = ref<{ id: number; nome: string }[]>([])
+const motoristas = ref<{ id: number; nome: string }[]>([])
 
 function recalc(row: Row) {
   const ve = row.valorEmpresa ?? 0; const vm = row.valorMotorista ?? 0; const vn = row.valorNf ?? 0
@@ -90,7 +83,32 @@ function recalc(row: Row) {
   row.comissaoValor = comissao; row.lucro = lucro; row.percentRentabilidade = lucro / ve
 }
 
-function nextId() { return Math.max(0, ...rows.map(r => r.id)) + 1 }
+let tempIdCounter = -1
+function nextTempId() { return tempIdCounter-- }
+
+function apiToRow(c: any): Row {
+  return {
+    id: c.id, data: c.data, clienteId: c.clienteId,
+    origem: c.origem ?? '', destino: c.destino ?? '', km: c.km, tipoVeiculo: c.tipoVeiculo ?? '',
+    valorMotorista: c.valorMotorista, valorEmpresa: c.valorEmpresa, valorNf: c.valorNf,
+    icmsPercent: c.icmsPercent, coPercent: c.coPercent, impostoPercent: c.impostoPercent,
+    seguroPercent: c.seguroPercent, diasPagamento: c.diasPagamento, percentComissao: c.percentComissao,
+    comissaoValor: c.comissaoValor, lucro: c.lucro, percentRentabilidade: c.percentRentabilidade,
+    situacao: c.situacao,
+  }
+}
+
+function rowToApiPayload(row: Row) {
+  return {
+    data: row.data, clienteId: row.clienteId!, origem: row.origem, destino: row.destino,
+    km: row.km ?? undefined, tipoVeiculo: row.tipoVeiculo,
+    valorMotorista: row.valorMotorista!, valorEmpresa: row.valorEmpresa!,
+    valorNf: row.valorNf ?? row.valorEmpresa!,
+    icmsPercent: row.icmsPercent, coPercent: row.coPercent, impostoPercent: row.impostoPercent,
+    seguroPercent: row.seguroPercent, diasPagamento: row.diasPagamento, percentComissao: row.percentComissao,
+    situacao: row.situacao,
+  }
+}
 const today = () => new Date().toISOString().split('T')[0]
 
 // ── Célula ativa ──────────────────────────────────────────────────────────
@@ -98,6 +116,8 @@ const today = () => new Date().toISOString().split('T')[0]
 const activeCell = ref<{ rowId: number; col: string } | null>(null)
 
 function activate(rowId: number, col: string) {
+  const rowIdx = filtradas.value.findIndex(r => r.id === rowId)
+  if (rowIdx !== -1) scrollRowIntoView(rowIdx)
   activeCell.value = { rowId, col }
   nextTick(() => {
     const el = document.querySelector<HTMLElement>(`[data-cell="${rowId}-${col}"] .cell-input`)
@@ -106,7 +126,18 @@ function activate(rowId: number, col: string) {
   })
 }
 
-function deactivate(row: Row) { recalc(row); activeCell.value = null }
+async function deactivate(row: Row) {
+  recalc(row); activeCell.value = null
+  const required = row.clienteId != null && row.valorEmpresa != null && row.valorMotorista != null
+  if (!required) return
+  if (row.id < 0) {
+    const { data } = await api.post('/cotacoes', rowToApiPayload(row))
+    const idx = rows.findIndex(r => r.id === row.id)
+    if (idx !== -1) Object.assign(rows[idx], apiToRow(data))
+  } else {
+    await api.put(`/cotacoes/${row.id}`, rowToApiPayload(row))
+  }
+}
 function isActive(rowId: number, col: string) { return activeCell.value?.rowId === rowId && activeCell.value?.col === col }
 
 function onCellClick(row: Row, col: ColDef) {
@@ -173,7 +204,8 @@ function clearAllFilters() { COLS.forEach(c => { filters[c.key] = '' }) }
 
 // ── Pipeline ───────────────────────────────────────────────────────────────
 
-const situacaoFiltro = ref<'todas' | 'pendente' | 'batida'>('todas')
+const situacaoFiltro = ref<'todas' | 'pendente' | 'batida'>('pendente')
+const carregando = ref(false)
 
 function filterRow(row: Row, col: ColDef, fv: string): boolean {
   if (!fv) return true
@@ -188,7 +220,7 @@ function filterRow(row: Row, col: ColDef, fv: string): boolean {
 }
 
 const filtradas = computed(() => {
-  let result = rows.filter(r => situacaoFiltro.value === 'todas' || r.situacao === situacaoFiltro.value)
+  let result = [...rows]
   for (const col of COLS) {
     const fv = filters[col.key]
     if (fv?.trim()) result = result.filter(r => filterRow(r, col, fv))
@@ -216,16 +248,56 @@ const totais = computed(() => {
   }
 })
 
+// ── Virtual scroll ────────────────────────────────────────────────────────────
+const ROW_HEIGHT = 36
+const BUFFER = 8
+const excelWrap = ref<HTMLElement | null>(null)
+const scrollTopVal = ref(0)
+const viewportHeight = ref(600)
+
+function onScroll() {
+  scrollTopVal.value = excelWrap.value?.scrollTop ?? 0
+}
+
+const visibleRange = computed(() => {
+  const count = filtradas.value.length
+  const visible = Math.ceil(viewportHeight.value / ROW_HEIGHT)
+  const start = Math.max(0, Math.floor(scrollTopVal.value / ROW_HEIGHT) - BUFFER)
+  const end = Math.min(count, start + visible + BUFFER * 2)
+  return { start, end }
+})
+
+const visibleRows = computed(() => filtradas.value.slice(visibleRange.value.start, visibleRange.value.end))
+const topPadding = computed(() => visibleRange.value.start * ROW_HEIGHT)
+const bottomPadding = computed(() => (filtradas.value.length - visibleRange.value.end) * ROW_HEIGHT)
+
+function scrollRowIntoView(rowIdx: number) {
+  const wrap = excelWrap.value
+  if (!wrap) return
+  const rowTop = rowIdx * ROW_HEIGHT
+  const rowBottom = rowTop + ROW_HEIGHT
+  const viewTop = wrap.scrollTop
+  const viewBottom = viewTop + viewportHeight.value
+  if (rowTop < viewTop) {
+    wrap.scrollTop = Math.max(0, rowTop - BUFFER * ROW_HEIGHT)
+    scrollTopVal.value = wrap.scrollTop
+  } else if (rowBottom > viewBottom) {
+    wrap.scrollTop = rowBottom - viewportHeight.value + BUFFER * ROW_HEIGHT
+    scrollTopVal.value = wrap.scrollTop
+  }
+}
+
 // ── Operações de linha ─────────────────────────────────────────────────────
 
 function addRow() {
-  const id = nextId(); rows.push(emptyRow(id, today()))
+  const id = nextTempId(); rows.push(emptyRow(id, today()))
   nextTick(() => activate(id, 'data'))
 }
 
-function deleteRow(id: number) {
+async function deleteRow(id: number) {
   const i = rows.findIndex(r => r.id === id); if (i !== -1) rows.splice(i, 1)
   if (activeCell.value?.rowId === id) activeCell.value = null
+  if (id > 0) await api.delete(`/cotacoes/${id}`)
 }
 
 function clearCell(row: Row, colKey: string) {
@@ -291,10 +363,20 @@ function ctxCopyCell() {
   hideCtx()
 }
 
-function ctxSetSituacao(s: 'pendente' | 'batida') {
+async function toggleSituacao(row: Row, force?: 'pendente' | 'batida') {
+  const next = force ?? (row.situacao === 'pendente' ? 'batida' : 'pendente')
+  row.situacao = next
+  if (row.id > 0) await api.patch(`/cotacoes/${row.id}`, { situacao: next })
+  if (situacaoFiltro.value !== 'todas' && next !== situacaoFiltro.value) {
+    const i = rows.findIndex(r => r.id === row.id)
+    if (i !== -1) rows.splice(i, 1)
+  }
+}
+
+async function ctxSetSituacao(s: 'pendente' | 'batida') {
   if (!ctxMenu.value) return
   const row = rows.find(r => r.id === ctxMenu.value!.rowId)
-  if (row) row.situacao = s
+  if (row) await toggleSituacao(row, s)
   hideCtx()
 }
 
@@ -317,12 +399,14 @@ function abrirConverter(row: Row) {
   converterDialog.value = true
 }
 
-function confirmarConverter() {
+async function confirmarConverter() {
   if (!converterRow.value || converterForm.motoristaId == null) return
-  // TODO: quando backend estiver ativo, fazer POST /api/cotacoes/:id/converter
-  // com { cte: converterForm.cte, motoristaId: converterForm.motoristaId }
-  // e então remover do array local
-  deleteRow(converterRow.value.id)
+  const id = converterRow.value.id
+  await api.post(`/cotacoes/${id}/converter`, {
+    motoristaId: converterForm.motoristaId,
+    cte: converterForm.cte || undefined,
+  })
+  const i = rows.findIndex(r => r.id === id); if (i !== -1) rows.splice(i, 1)
   converterDialog.value = false
   showToast('Cotação convertida em carga — acesse a aba Cargas')
 }
@@ -354,18 +438,21 @@ const calc = computed(() => {
 
 function abrirDialog() { Object.assign(form, novaBase()); dialogAberto.value = true }
 
-function salvarModal() {
+async function salvarModal() {
   if (!calc.value || form.clienteId == null) return
-  const c = calc.value; const id = nextId()
-  rows.unshift({
-    id, data: form.dataObj.toISOString().split('T')[0], clienteId: form.clienteId,
-    origem: form.origem, destino: form.destino, km: form.km, tipoVeiculo: form.tipoVeiculo,
-    valorMotorista: form.valorMotorista, valorEmpresa: form.valorEmpresa, valorNf: form.valorNf ?? 0,
+  const { data } = await api.post('/cotacoes', {
+    data: form.dataObj.toISOString().split('T')[0], clienteId: form.clienteId,
+    origem: form.origem, destino: form.destino, km: form.km ?? undefined, tipoVeiculo: form.tipoVeiculo,
+    valorMotorista: form.valorMotorista!, valorEmpresa: form.valorEmpresa!,
+    valorNf: form.valorNf ?? form.valorEmpresa!,
     icmsPercent: form.icmsPercent, coPercent: form.coPercent, impostoPercent: form.impostoPercent,
     seguroPercent: form.seguroPercent, diasPagamento: form.diasPagamento, percentComissao: form.percentComissao,
-    comissaoValor: c.comissaoValor, lucro: c.lucro, percentRentabilidade: c.rentabilidade,
-    situacao: 'pendente',
+    situacao: 'pendente' as const,
   })
+  const newRow = apiToRow(data)
+  if (situacaoFiltro.value === 'todas' || situacaoFiltro.value === newRow.situacao) {
+    rows.unshift(newRow)
+  }
   dialogAberto.value = false
   showToast('Cotação registrada!')
 }
@@ -396,15 +483,63 @@ function globalKeydown(e: KeyboardEvent) {
 
 function hideAllMenus() { hideCtx(); hideColCtx(); showColRestorePanel.value = false }
 
-onMounted(() => { document.addEventListener('keydown', globalKeydown); document.addEventListener('click', hideAllMenus) })
-onUnmounted(() => { document.removeEventListener('keydown', globalKeydown); document.removeEventListener('click', hideAllMenus) })
+async function carregarCotacoes() {
+  carregando.value = true
+  try {
+    const { data } = await api.get(`/cotacoes?situacao=${situacaoFiltro.value}`)
+    rows.splice(0, rows.length, ...data.map(apiToRow))
+  } finally {
+    carregando.value = false
+  }
+}
+
+async function carregarDados() {
+  carregando.value = true
+  try {
+    const [cotRes, cliRes, motRes] = await Promise.all([
+      api.get(`/cotacoes?situacao=${situacaoFiltro.value}`),
+      api.get('/clientes'),
+      api.get('/motoristas'),
+    ])
+    rows.splice(0, rows.length, ...cotRes.data.map(apiToRow))
+    clientes.value = cliRes.data
+    motoristas.value = motRes.data
+  } finally {
+    carregando.value = false
+  }
+}
+
+watch(situacaoFiltro, carregarCotacoes)
+
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  document.addEventListener('keydown', globalKeydown)
+  document.addEventListener('click', hideAllMenus)
+  carregarDados()
+  nextTick(() => {
+    if (excelWrap.value) {
+      viewportHeight.value = excelWrap.value.clientHeight
+      resizeObserver = new ResizeObserver(() => {
+        viewportHeight.value = excelWrap.value?.clientHeight ?? 600
+      })
+      resizeObserver.observe(excelWrap.value)
+    }
+  })
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', globalKeydown)
+  document.removeEventListener('click', hideAllMenus)
+  resizeObserver?.disconnect()
+})
 
 // ── Formatação ────────────────────────────────────────────────────────────
 
 const BRL = (v: number | null) => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const PCT = (v: number) => (v * 100).toFixed(1) + '%'
 const fmtData = (d: string) => { const [, m, day] = d.split('-'); return `${day}/${m}` }
-const nomeCliente = (id: number | null) => mockClientes.find(c => c.id === id)?.nome ?? ''
+const nomeCliente = (id: number | null) => clientes.value.find(c => c.id === id)?.nome ?? ''
 function rentCor(r: number) { return r >= 0.28 ? 'green' : r >= 0.18 ? 'amber' : 'red' }
 
 function displayVal(row: Row, col: ColDef): string {
@@ -422,12 +557,13 @@ function displayVal(row: Row, col: ColDef): string {
   }
 }
 
-const opcoesCliente = mockClientes.map(c => ({ label: c.nome, value: c.id }))
-const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id }))
+const opcoesCliente = computed(() => clientes.value.map(c => ({ label: c.nome, value: c.id })))
+const opcoesMotorista = computed(() => motoristas.value.map(m => ({ label: m.nome, value: m.id })))
 </script>
 
 <template>
-  <div class="page" @click="hideAllMenus">
+  <div class="page" style="position:relative" @click="hideAllMenus">
+    <AppLoader :loading="carregando" />
 
     <!-- Cabeçalho -->
     <div class="page-header">
@@ -463,7 +599,7 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
     </div>
 
     <!-- Tabela -->
-    <div class="excel-wrap" @click.stop>
+    <div class="excel-wrap" ref="excelWrap" @scroll.passive="onScroll" @click.stop>
       <table class="excel-table" :style="{ width: totalTableWidth + 'px' }">
         <thead>
           <tr>
@@ -486,7 +622,7 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
               <template v-if="col.type === 'select-cliente'">
                 <select class="filter-input" v-model="filters[col.key]">
                   <option value="">Todos</option>
-                  <option v-for="c in mockClientes" :key="c.id" :value="c.nome.toLowerCase()">{{ c.nome }}</option>
+                  <option v-for="c in clientes" :key="c.id" :value="c.nome.toLowerCase()">{{ c.nome }}</option>
                 </select>
               </template>
               <template v-else-if="col.type === 'situacao'">
@@ -506,8 +642,11 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
         </thead>
 
         <tbody>
+          <tr v-if="topPadding > 0" class="vscroll-pad">
+            <td :colspan="visibleCols.length + 2" :style="{ height: topPadding + 'px' }" />
+          </tr>
           <tr
-            v-for="(row, rowIdx) in filtradas" :key="row.id"
+            v-for="(row, rowIdx) in visibleRows" :key="row.id"
             class="excel-row"
             :class="{ 'row-active': activeCell?.rowId === row.id, 'row-dragging': draggingId === row.id, 'row-drag-over': dragOverId === row.id, 'row-batida': row.situacao === 'batida' }"
             @contextmenu.stop="showCtx($event, row, activeCell?.col ?? 'data')"
@@ -516,7 +655,7 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
             @drop="onDrop($event, row.id)"
           >
             <td class="td-rownum td-handle" draggable="true" @dragstart="onDragStart($event, row.id)" @dragend="onDragEnd" @contextmenu.stop="showCtx($event, row, 'data')">
-              <i class="pi pi-bars drag-icon" /><span class="row-num">{{ rowIdx + 1 }}</span>
+              <i class="pi pi-bars drag-icon" /><span class="row-num">{{ visibleRange.start + rowIdx + 1 }}</span>
             </td>
 
             <td
@@ -531,7 +670,7 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
 
                 <span v-if="col.type === 'situacao'"
                   class="status-tag" :class="row.situacao"
-                  @click.stop="row.situacao = row.situacao === 'pendente' ? 'batida' : 'pendente'"
+                  @click.stop="toggleSituacao(row)"
                   title="Clique para alternar"
                 >
                   <i :class="row.situacao === 'pendente' ? 'pi pi-clock' : 'pi pi-times-circle'" style="font-size:10px" />
@@ -577,11 +716,14 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
                   @blur="deactivate(row)" @keydown.tab="onTab($event, row, col.key)"
                   @keydown.escape.stop="onEscape">
                   <option value="">—</option>
-                  <option v-for="c in mockClientes" :key="c.id" :value="c.id">{{ c.nome }}</option>
+                  <option v-for="c in clientes" :key="c.id" :value="c.id">{{ c.nome }}</option>
                 </select>
               </template>
             </td>
             <td class="td-spacer"></td>
+          </tr>
+          <tr v-if="bottomPadding > 0" class="vscroll-pad">
+            <td :colspan="visibleCols.length + 2" :style="{ height: bottomPadding + 'px' }" />
           </tr>
         </tbody>
 
@@ -837,6 +979,8 @@ const opcoesMotorista = mockMotoristas.map(m => ({ label: m.nome, value: m.id })
 
 .add-row-btn { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 14px; border: none; background: none; color: #94a3b8; font-size: 12.5px; font-family: inherit; cursor: pointer; transition: all 0.14s; }
 .add-row-btn:hover { background: #f0f4ff; color: #7c3aed; }
+
+.vscroll-pad td { border: none !important; padding: 0 !important; background: white !important; pointer-events: none; }
 
 .shortcuts-hint { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; padding: 0 20px; font-size: 11.5px; color: #94a3b8; }
 .shortcuts-hint kbd { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1px 5px; font-family: inherit; font-size: 10.5px; color: #64748b; }

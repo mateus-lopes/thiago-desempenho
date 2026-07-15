@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
-import { mockCargas, mockClientes } from '../mocks/data'
+import { api } from '../services/api'
+import AppLoader from '../components/AppLoader.vue'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -18,38 +19,102 @@ const hora = new Date().getHours()
 const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite'
 const iconeHora = hora < 12 ? 'pi-sun' : hora < 18 ? 'pi-cloud' : 'pi-moon'
 
-const cargas = mockCargas.filter(c => c.data.startsWith('2026-07'))
+const MESES_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+const MESES_NOMES  = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
-const totalFaturamento = cargas.reduce((s, c) => s + c.valorEmpresa, 0)
-const totalComissao    = cargas.reduce((s, c) => s + c.comissaoValor, 0)
-const totalLucro       = cargas.reduce((s, c) => s + c.lucro, 0)
-const rentMedia        = totalLucro / totalFaturamento
+const hoje = new Date()
+const anoSelecionado = ref(hoje.getFullYear())
+const mesSelecionado = ref(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`)
 
-const totalMeta = mockClientes.reduce((s, c) => s + c.meta, 0)
-const diasRestantes = 31 - 13
-const falta = totalMeta - totalFaturamento
-const necessarioPorDia = falta / diasRestantes
+const meses = computed(() =>
+  MESES_LABELS.map((label, i) => ({
+    label,
+    val: `${anoSelecionado.value}-${String(i + 1).padStart(2, '0')}`,
+  }))
+)
 
-const metaClientes = mockClientes.map(cl => {
-  const realizado = cargas.filter(c => c.clienteId === cl.id).reduce((s, c) => s + c.valorEmpresa, 0)
-  const pct = realizado / cl.meta
-  const cor = pct >= 0.6 ? 'green' : pct >= 0.35 ? 'amber' : 'red'
-  return { ...cl, realizado, pct, cor }
-}).sort((a, b) => b.realizado - a.realizado)
+function selecionarAno(ano: number) {
+  const mes = mesSelecionado.value.split('-')[1]
+  anoSelecionado.value = ano
+  mesSelecionado.value = `${ano}-${mes}`
+}
 
-// Acumulado diário jul/2026
+interface ProgressoMeta { clienteId: number; clienteNome: string; faturamento: number; meta: number; percent: number }
+interface Carga { id: number; data: string; clienteId: number; valorEmpresa: number; comissaoValor: number; lucro: number; status: string }
+
+const progressoMetas = ref<ProgressoMeta[]>([])
+const cargas = ref<Carga[]>([])
+const carregando = ref(false)
+
+async function carregarDados() {
+  carregando.value = true
+  try {
+    const [dashRes, cargasRes] = await Promise.all([
+      api.get(`/dashboard?mes=${mesSelecionado.value}`),
+      api.get(`/cargas?mes=${mesSelecionado.value}`),
+    ])
+    progressoMetas.value = dashRes.data.progressoMeta ?? []
+    cargas.value = cargasRes.data
+  } finally {
+    carregando.value = false
+  }
+}
+
+watch(mesSelecionado, carregarDados)
+onMounted(carregarDados)
+
+const totalFaturamento = computed(() => cargas.value.reduce((s, c) => s + c.valorEmpresa, 0))
+const totalComissao    = computed(() => cargas.value.reduce((s, c) => s + c.comissaoValor, 0))
+const totalLucro       = computed(() => cargas.value.reduce((s, c) => s + c.lucro, 0))
+const rentMedia        = computed(() => totalFaturamento.value > 0 ? totalLucro.value / totalFaturamento.value : 0)
+const totalMeta        = computed(() => progressoMetas.value.reduce((s, p) => s + p.meta, 0))
+
+function diasNoMes(anoMes: string): number {
+  const [ano, mes] = anoMes.split('-').map(Number)
+  return new Date(ano, mes, 0).getDate()
+}
+
+const diasRestantes = computed(() => {
+  const [ano, mes] = mesSelecionado.value.split('-').map(Number)
+  const isMesAtual = hoje.getFullYear() === ano && (hoje.getMonth() + 1) === mes
+  const diaAtual = isMesAtual ? hoje.getDate() : diasNoMes(mesSelecionado.value)
+  return Math.max(0, diasNoMes(mesSelecionado.value) - diaAtual)
+})
+
+const falta = computed(() => Math.max(0, totalMeta.value - totalFaturamento.value))
+const necessarioPorDia = computed(() => diasRestantes.value > 0 ? falta.value / diasRestantes.value : 0)
+
+const metaClientes = computed(() =>
+  progressoMetas.value.map(p => {
+    const pct = p.meta > 0 ? p.faturamento / p.meta : 0
+    const cor = pct >= 0.6 ? 'green' : pct >= 0.35 ? 'amber' : 'red'
+    return { id: p.clienteId, nome: p.clienteNome, meta: p.meta, realizado: p.faturamento, pct, cor }
+  }).sort((a, b) => b.realizado - a.realizado)
+)
+
+const ultimoDiaComDado = computed(() =>
+  cargas.value.reduce((max, c) => Math.max(max, parseInt(c.data.split('-')[2])), 0)
+)
+
 const cumulativeData = computed(() => {
   let acc = 0
-  return Array.from({ length: 13 }, (_, i) => {
-    const dayStr = `2026-07-${String(i + 1).padStart(2, '0')}`
-    acc += cargas.filter(c => c.data === dayStr).reduce((s, c) => s + c.valorEmpresa, 0)
+  return Array.from({ length: ultimoDiaComDado.value }, (_, i) => {
+    const dayStr = `${mesSelecionado.value}-${String(i + 1).padStart(2, '0')}`
+    acc += cargas.value.filter(c => c.data === dayStr).reduce((s, c) => s + c.valorEmpresa, 0)
     return acc
   })
 })
 
-const targetData = Array.from({ length: 13 }, (_, i) =>
-  Math.round((totalMeta / 31) * (i + 1))
+const targetData = computed(() =>
+  Array.from({ length: ultimoDiaComDado.value }, (_, i) =>
+    Math.round((totalMeta.value / diasNoMes(mesSelecionado.value)) * (i + 1))
+  )
 )
+
+const mesNome = computed(() => {
+  const [, mes] = mesSelecionado.value.split('-').map(Number)
+  return MESES_NOMES[mes - 1]
+})
 
 const chartOption = computed(() => ({
   grid: { left: 0, right: 10, bottom: 28, top: 10, containLabel: true },
@@ -61,7 +126,7 @@ const chartOption = computed(() => ({
   legend: { bottom: 0, textStyle: { fontSize: 11, color: '#64748b' } },
   xAxis: {
     type: 'category',
-    data: Array.from({ length: 13 }, (_, i) => String(i + 1)),
+    data: Array.from({ length: ultimoDiaComDado.value }, (_, i) => String(i + 1)),
     axisLabel: { fontSize: 10, color: '#94a3b8' },
     axisLine: { lineStyle: { color: '#e2e8f0' } },
     axisTick: { show: false },
@@ -85,7 +150,7 @@ const chartOption = computed(() => ({
     {
       name: 'Meta (pace)',
       type: 'line',
-      data: targetData,
+      data: targetData.value,
       lineStyle: { color: '#94a3b8', width: 1.5, type: 'dashed' },
       itemStyle: { color: '#94a3b8' },
       symbol: 'none',
@@ -96,7 +161,8 @@ const chartOption = computed(() => ({
 
 <template>
   <div class="page">
-    <div class="wrap">
+    <div class="wrap" style="position:relative">
+      <AppLoader :loading="carregando" />
 
     <!-- Saudação -->
     <div class="greeting-header">
@@ -105,7 +171,24 @@ const chartOption = computed(() => ({
           <i :class="`pi ${iconeHora} greeting-icon`" />
           {{ saudacao }}, Thiago!
         </h1>
-        <p class="greeting-sub">Aqui está o resumo do desempenho de julho.</p>
+        <p class="greeting-sub">Aqui está o resumo do desempenho de {{ mesNome }}.</p>
+      </div>
+    </div>
+
+    <!-- Seletor de ano + mês -->
+    <div class="periodo-selector" style="margin-bottom: 20px">
+      <div class="ano-toggle">
+        <button class="ano-btn" :class="{ ativo: anoSelecionado === 2025 }" @click="selecionarAno(2025)">2025</button>
+        <button class="ano-btn" :class="{ ativo: anoSelecionado === 2026 }" @click="selecionarAno(2026)">2026</button>
+      </div>
+      <div class="meses-selector">
+        <button
+          v-for="m in meses"
+          :key="m.val"
+          class="mes-btn"
+          :class="{ ativo: mesSelecionado === m.val }"
+          @click="mesSelecionado = m.val"
+        >{{ m.label }}</button>
       </div>
     </div>
 
@@ -151,7 +234,7 @@ const chartOption = computed(() => ({
     <!-- Evolução + Meta -->
     <div class="dash-row cols-2-1">
       <div class="card">
-        <div class="card-title">Evolução Acumulada em Julho</div>
+        <div class="card-title">Evolução Acumulada em {{ mesNome }}</div>
         <VChart :option="chartOption" style="height:210px" autoresize />
       </div>
 
@@ -191,7 +274,7 @@ const chartOption = computed(() => ({
       <div class="card">
         <div class="card-title">Pace do Mês</div>
         <div style="text-align:center;padding:10px 0 14px">
-          <div style="font-size:12px;color:#64748b;margin-bottom:4px">Dias restantes em Julho</div>
+          <div style="font-size:12px;color:#64748b;margin-bottom:4px">Dias restantes em {{ mesNome }}</div>
           <div class="pace-number">{{ diasRestantes }}</div>
           <div style="font-size:12px;color:#94a3b8;margin-top:2px">dias para fechar o mês</div>
         </div>

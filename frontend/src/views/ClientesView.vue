@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
-import { useLocalStorage } from '../composables/useLocalStorage'
-import { mockClientes, type Cliente } from '../mocks/data'
+import { api } from '../services/api'
+import AppLoader from '../components/AppLoader.vue'
 
-const clientes = useLocalStorage<Cliente[]>('thiago_clientes', mockClientes)
+interface Cliente { id: number; nome: string; meta: number; cnpj?: string; contato?: string }
 
+const clientes = ref<Cliente[]>([])
+const carregando = ref(false)
 const showModal = ref(false)
 const isEditing = ref(false)
 const editId = ref<number | null>(null)
@@ -19,6 +21,18 @@ const totalMeta = computed(() => clientes.value.reduce((s, c) => s + c.meta, 0))
 
 const BRL = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+
+async function carregarClientes() {
+  carregando.value = true
+  try {
+    const { data } = await api.get('/clientes')
+    clientes.value = data
+  } finally {
+    carregando.value = false
+  }
+}
+
+onMounted(carregarClientes)
 
 function openNew() {
   isEditing.value = false
@@ -36,28 +50,37 @@ function openEdit(cl: Cliente) {
   showModal.value = true
 }
 
-function save() {
+async function save() {
   if (!form.value.nome.trim()) { erro.value = 'Nome obrigatório'; return }
   if (form.value.meta <= 0) { erro.value = 'Meta deve ser maior que zero'; return }
-
-  if (isEditing.value && editId.value !== null) {
-    const idx = clientes.value.findIndex(c => c.id === editId.value)
-    if (idx !== -1) clientes.value[idx] = { id: editId.value, nome: form.value.nome.trim().toUpperCase(), meta: form.value.meta }
-  } else {
-    const nextId = clientes.value.length ? Math.max(...clientes.value.map(c => c.id)) + 1 : 1
-    clientes.value.push({ id: nextId, nome: form.value.nome.trim().toUpperCase(), meta: form.value.meta })
+  try {
+    const payload = { nome: form.value.nome.trim().toUpperCase(), meta: form.value.meta }
+    if (isEditing.value && editId.value !== null) {
+      await api.put(`/clientes/${editId.value}`, payload)
+    } else {
+      await api.post('/clientes', payload)
+    }
+    await carregarClientes()
+    showModal.value = false
+  } catch {
+    erro.value = 'Erro ao salvar. Tente novamente.'
   }
-  showModal.value = false
 }
 
-function remove(id: number) {
-  clientes.value = clientes.value.filter(c => c.id !== id)
+async function remove(id: number) {
+  try {
+    await api.delete(`/clientes/${id}`)
+    clientes.value = clientes.value.filter(c => c.id !== id)
+  } catch {
+    console.error('Erro ao excluir cliente')
+  }
 }
 </script>
 
 <template>
   <div class="page">
-    <div class="wrap">
+    <div class="wrap" style="position:relative">
+      <AppLoader :loading="carregando" />
 
       <div class="page-header">
         <div>

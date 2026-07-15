@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
 import InputNumber from 'primevue/inputnumber'
@@ -8,17 +8,18 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, MarkLineComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
-import { useLocalStorage } from '../composables/useLocalStorage'
-import { mockClientes, mockCargas } from '../mocks/data'
+import { api } from '../services/api'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent])
 
-// clientes e metas vêm do localStorage
-const clientes = useLocalStorage('thiago_clientes', mockClientes)
-// metas overrides: chave = `${clienteId}_YYYY-MM`, valor = meta em reais
-const metasOverride = useLocalStorage<Record<string, number>>('thiago_metas', {})
+interface Cliente { id: number; nome: string; meta: number }
+interface Carga { id: number; data: string; clienteId: number; valorEmpresa: number }
+interface ProgressoMeta { clienteId: number; clienteNome: string; faturamento: number; meta: number; percent: number }
 
-// mês/ano selecionado
+const clientes = ref<Cliente[]>([])
+const cargas = ref<Carga[]>([])
+const progressoMetas = ref<ProgressoMeta[]>([])
+
 const meses = [
   { label: 'Jan', val: '2026-01' }, { label: 'Fev', val: '2026-02' },
   { label: 'Mar', val: '2026-03' }, { label: 'Abr', val: '2026-04' },
@@ -29,9 +30,8 @@ const meses = [
 ]
 const mesSelecionado = ref('2026-07')
 
-// modal de edição de meta
 const showEditMeta = ref(false)
-const editingCliente = ref<typeof clientes.value[number] | null>(null)
+const editingCliente = ref<{ id: number; nome: string } | null>(null)
 const novaMetaValor = ref(0)
 
 const BRL = (v: number) =>
@@ -39,14 +39,29 @@ const BRL = (v: number) =>
 const PCT = (v: number) =>
   (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
 
+async function carregarDados() {
+  const [clientesRes, dashRes, cargasRes] = await Promise.all([
+    api.get('/clientes'),
+    api.get(`/dashboard?mes=${mesSelecionado.value}`),
+    api.get(`/cargas?mes=${mesSelecionado.value}`),
+  ])
+  clientes.value = clientesRes.data
+  progressoMetas.value = dashRes.data.progressoMeta ?? []
+  cargas.value = cargasRes.data
+}
+
+watch(mesSelecionado, carregarDados)
+onMounted(carregarDados)
+
 function getMetaCliente(clienteId: number): number {
-  const key = `${clienteId}_${mesSelecionado.value}`
-  return metasOverride.value[key] ?? clientes.value.find(c => c.id === clienteId)?.meta ?? 0
+  const prog = progressoMetas.value.find(p => p.clienteId === clienteId)
+  if (prog) return prog.meta
+  return clientes.value.find(c => c.id === clienteId)?.meta ?? 0
 }
 
 function getRealizadoCliente(clienteId: number): number {
-  return mockCargas
-    .filter(c => c.clienteId === clienteId && c.data.startsWith(mesSelecionado.value))
+  return cargas.value
+    .filter(c => c.clienteId === clienteId)
     .reduce((s, c) => s + c.valorEmpresa, 0)
 }
 
@@ -69,17 +84,27 @@ const resumo = computed(() => {
   return { metaTotal, realizadoTotal, faltaTotal, pctTotal }
 })
 
-function openEditMeta(cl: typeof clientes.value[number]) {
+function openEditMeta(cl: { id: number; nome: string }) {
   editingCliente.value = cl
   novaMetaValor.value = getMetaCliente(cl.id)
   showEditMeta.value = true
 }
 
-function salvarMeta() {
+async function salvarMeta() {
   if (!editingCliente.value) return
-  const key = `${editingCliente.value.id}_${mesSelecionado.value}`
-  metasOverride.value = { ...metasOverride.value, [key]: novaMetaValor.value }
-  showEditMeta.value = false
+  const [ano, mes] = mesSelecionado.value.split('-').map(Number)
+  try {
+    await api.put('/metas', {
+      clienteId: editingCliente.value.id,
+      mes,
+      ano,
+      valorMeta: novaMetaValor.value,
+    })
+    await carregarDados()
+    showEditMeta.value = false
+  } catch {
+    console.error('Erro ao salvar meta')
+  }
 }
 
 const mesLabel = computed(() =>
@@ -95,21 +120,18 @@ const chartOption = computed(() => {
   const totalMeta = resumo.value.metaTotal
   const dias = diasNoMes(mesSelecionado.value)
 
-  // pace linear: quanto deveria estar acumulado a cada dia para bater a meta
   const paceData = Array.from({ length: dias }, (_, i) =>
     Math.round(totalMeta / dias * (i + 1))
   )
 
-  // realizado acumulado por dia
   let acc = 0
-  const ultimoDiaComDado = mockCargas
-    .filter(c => c.data.startsWith(mesSelecionado.value))
+  const ultimoDiaComDado = cargas.value
     .reduce((max, c) => Math.max(max, parseInt(c.data.split('-')[2])), 0)
 
   const realizadoData: (number | null)[] = Array.from({ length: dias }, (_, i) => {
     const dia = i + 1
     const dayStr = `${mesSelecionado.value}-${String(dia).padStart(2, '0')}`
-    acc += mockCargas.filter(c => c.data === dayStr).reduce((s, c) => s + c.valorEmpresa, 0)
+    acc += cargas.value.filter(c => c.data === dayStr).reduce((s, c) => s + c.valorEmpresa, 0)
     return dia <= ultimoDiaComDado ? acc : null
   })
 

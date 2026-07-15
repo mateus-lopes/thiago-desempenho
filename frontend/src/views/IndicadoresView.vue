@@ -1,22 +1,66 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, FunnelChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
-import { mockCargas, mockClientes, mockIndicadores, type IndicadorSemanal } from '../mocks/data'
-import { useLocalStorage } from '../composables/useLocalStorage'
+import { api } from '../services/api'
 
 use([CanvasRenderer, BarChart, FunnelChart, GridComponent, TooltipComponent, LegendComponent])
 
-// ── Indicadores de prospecção (funil) ─────────────────────────────────────
-
-const defaultIndicadores: Record<string, IndicadorSemanal> = {}
-for (const ind of mockIndicadores) {
-  defaultIndicadores[`${ind.mes}_${ind.semana}`] = ind
+interface IndicadorSemanal {
+  mes: string; semana: number
+  ligacoes: number; leadsAdicionados: number; leadsDeclinados: number; clientesFechados: number
 }
-const indicadores = useLocalStorage<Record<string, IndicadorSemanal>>('thiago_indicadores', defaultIndicadores)
+interface Carga {
+  id: number; data: string; clienteId: number
+  valorEmpresa: number; comissaoValor: number; lucro: number
+  percentRentabilidade: number; status: string
+}
+interface Cliente { id: number; nome: string }
+
+const indicadores = ref<Record<string, IndicadorSemanal>>({})
+const cargasMes = ref<Carga[]>([])
+const clientes = ref<Cliente[]>([])
+
+const meses = [
+  { label: 'Jan', val: '2026-01' }, { label: 'Fev', val: '2026-02' },
+  { label: 'Mar', val: '2026-03' }, { label: 'Abr', val: '2026-04' },
+  { label: 'Mai', val: '2026-05' }, { label: 'Jun', val: '2026-06' },
+  { label: 'Jul', val: '2026-07' }, { label: 'Ago', val: '2026-08' },
+  { label: 'Set', val: '2026-09' }, { label: 'Out', val: '2026-10' },
+  { label: 'Nov', val: '2026-11' }, { label: 'Dez', val: '2026-12' },
+]
+const mesSelecionado = ref('2026-07')
+const semanaAtiva = ref(1)
+
+const BRL = (v: number) =>
+  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+const PCT = (v: number) =>
+  (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
+
+async function carregarDados() {
+  const [indRes, cargasRes, clientesRes] = await Promise.all([
+    api.get(`/indicadores?mes=${mesSelecionado.value}`),
+    api.get(`/cargas?mes=${mesSelecionado.value}`),
+    api.get('/clientes'),
+  ])
+  const map: Record<string, IndicadorSemanal> = {}
+  for (const ind of (indRes.data as IndicadorSemanal[])) {
+    map[`${ind.mes}_${ind.semana}`] = ind
+  }
+  indicadores.value = map
+  cargasMes.value = cargasRes.data
+  clientes.value = clientesRes.data
+}
+
+watch(mesSelecionado, carregarDados)
+onMounted(carregarDados)
+
+function nomeCliente(id: number): string {
+  return clientes.value.find(cl => cl.id === id)?.nome ?? '—'
+}
 
 const indicKey = computed(() => `${mesSelecionado.value}_${semanaAtiva.value}`)
 const indicAtivo = computed<IndicadorSemanal>(() =>
@@ -26,10 +70,14 @@ const indicAtivo = computed<IndicadorSemanal>(() =>
   }
 )
 
-function setIndic(field: keyof Omit<IndicadorSemanal, 'mes' | 'semana'>, value: number) {
-  indicadores.value = {
-    ...indicadores.value,
-    [indicKey.value]: { ...indicAtivo.value, [field]: Math.max(0, value || 0) },
+async function setIndic(field: keyof Omit<IndicadorSemanal, 'mes' | 'semana'>, value: number) {
+  const newVal = Math.max(0, value || 0)
+  const updated: IndicadorSemanal = { ...indicAtivo.value, [field]: newVal }
+  indicadores.value = { ...indicadores.value, [indicKey.value]: updated }
+  try {
+    await api.put('/indicadores', updated)
+  } catch {
+    console.error('Erro ao salvar indicador')
   }
 }
 
@@ -73,23 +121,6 @@ const chartFunil = computed(() => {
   }
 })
 
-const meses = [
-  { label: 'Jan', val: '2026-01' }, { label: 'Fev', val: '2026-02' },
-  { label: 'Mar', val: '2026-03' }, { label: 'Abr', val: '2026-04' },
-  { label: 'Mai', val: '2026-05' }, { label: 'Jun', val: '2026-06' },
-  { label: 'Jul', val: '2026-07' }, { label: 'Ago', val: '2026-08' },
-  { label: 'Set', val: '2026-09' }, { label: 'Out', val: '2026-10' },
-  { label: 'Nov', val: '2026-11' }, { label: 'Dez', val: '2026-12' },
-]
-const mesSelecionado = ref('2026-07')
-const semanaAtiva = ref(1)
-
-const BRL = (v: number) =>
-  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
-const PCT = (v: number) =>
-  (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'
-
-// Faixas das semanas do mês (1-7, 8-14, 15-21, 22-fim)
 const semanas = [
   { num: 1, label: 'Semana 1', de: 1, ate: 7 },
   { num: 2, label: 'Semana 2', de: 8, ate: 14 },
@@ -98,8 +129,7 @@ const semanas = [
 ]
 
 function cargasDaSemana(semana: typeof semanas[number]) {
-  return mockCargas.filter(c => {
-    if (!c.data.startsWith(mesSelecionado.value)) return false
+  return cargasMes.value.filter(c => {
     const dia = parseInt(c.data.split('-')[2])
     return dia >= semana.de && dia <= semana.ate
   })
@@ -121,10 +151,9 @@ const semanaInfo = computed(() =>
   dadosSemanas.value.find(s => s.num === semanaAtiva.value)!
 )
 
-// Top clientes da semana
 const topClientesSemana = computed(() => {
   const cargas = semanaInfo.value.cargas
-  return mockClientes.map(cl => ({
+  return clientes.value.map(cl => ({
     nome: cl.nome,
     fat: cargas.filter(c => c.clienteId === cl.id).reduce((s, c) => s + c.valorEmpresa, 0),
   }))
@@ -296,7 +325,7 @@ const mesLabel = computed(() =>
               <td class="td-rota">{{ c.origem }} <span class="arrow">→</span> {{ c.destino }}</td>
               <td>
                 <span class="cliente-tag">
-                  {{ mockClientes.find(cl => cl.id === c.clienteId)?.nome ?? '—' }}
+                  {{ nomeCliente(c.clienteId) }}
                 </span>
               </td>
               <td class="col-right td-val">{{ BRL(c.valorEmpresa) }}</td>
