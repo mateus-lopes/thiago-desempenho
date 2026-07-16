@@ -1,60 +1,55 @@
 <script setup lang="ts">
-defineProps<{ loading: boolean }>()
+import { ref, watch } from 'vue'
+
+const props = defineProps<{ loading?: boolean }>()
+
+type Phase = 'hidden' | 'loading' | 'completing'
+const phase = ref<Phase>('hidden')
+
+watch(() => props.loading, (val) => {
+  if (val) {
+    phase.value = 'loading'
+  } else if (phase.value === 'loading') {
+    phase.value = 'completing'
+    setTimeout(() => { phase.value = 'hidden' }, 380)
+  }
+}, { immediate: true })
 </script>
 
 <template>
-  <Transition name="fade">
-    <div v-if="loading" class="loader-overlay">
-      <div class="loader-box">
-        <div class="spinner" />
-        <span class="loader-text">Carregando...</span>
-      </div>
-    </div>
-  </Transition>
+  <div v-if="phase !== 'hidden'" class="top-bar" :class="phase" />
 </template>
 
 <style scoped>
-.loader-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  border-radius: inherit;
+.top-bar {
+  position: fixed;
+  top: 0; left: 0;
+  height: 3.5px;
+  z-index: 9999;
+  border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, #7c3aed, #a855f7);
+  pointer-events: none;
 }
 
-.loader-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
+.top-bar.loading {
+  animation: bar-loading 2.5s ease-out forwards;
 }
 
-.spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid #ede9fe;
-  border-top-color: #7c3aed;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+.top-bar.completing {
+  animation: bar-complete 0.38s ease forwards;
 }
 
-.loader-text {
-  font-size: 13px;
-  font-weight: 500;
-  color: #64748b;
-  letter-spacing: 0.02em;
+@keyframes bar-loading {
+  0%   { width: 0%; }
+  20%  { width: 35%; }
+  50%  { width: 60%; }
+  80%  { width: 75%; }
+  100% { width: 85%; }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@keyframes bar-complete {
+  0%   { width: 85%; opacity: 1; }
+  55%  { width: 100%; opacity: 1; }
+  100% { width: 100%; opacity: 0; }
 }
-
-.fade-enter-active,
-.fade-leave-active { transition: opacity 0.2s ease; }
-.fade-enter-from,
-.fade-leave-to { opacity: 0; }
 </style>

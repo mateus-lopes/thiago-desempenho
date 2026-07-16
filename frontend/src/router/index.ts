@@ -16,6 +16,7 @@ export const router = createRouter({
     { path: '/indicadores', name: 'indicadores', component: () => import('../views/IndicadoresView.vue') },
     { path: '/anual', name: 'anual', component: () => import('../views/AnualView.vue') },
     { path: '/cotacoes', name: 'cotacoes', component: () => import('../views/CotacoesView.vue') },
+    { path: '/notificacoes', name: 'notificacoes', component: () => import('../views/NotificacoesView.vue') },
   ],
 })
 

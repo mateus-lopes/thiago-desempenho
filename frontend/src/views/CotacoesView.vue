@@ -8,6 +8,10 @@ import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
 import { api } from '../services/api'
 import AppLoader from '../components/AppLoader.vue'
+import { useToast } from '../composables/useToast'
+import { getRowCache, setRowCache } from '../composables/useRowCache'
+
+const { showToast } = useToast()
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 
@@ -206,6 +210,7 @@ function clearAllFilters() { COLS.forEach(c => { filters[c.key] = '' }) }
 
 const situacaoFiltro = ref<'todas' | 'pendente' | 'batida'>('pendente')
 const carregando = ref(false)
+const skeletonCount = ref(getRowCache('cotacoes_' + 'pendente'))
 
 function filterRow(row: Row, col: ColDef, fv: string): boolean {
   if (!fv) return true
@@ -240,12 +245,14 @@ const filtradas = computed(() => {
 
 const totais = computed(() => {
   const rs = filtradas.value; const n = rs.length || 1
-  return {
-    valorEmpresa: rs.reduce((s, r) => s + (r.valorEmpresa ?? 0), 0),
-    comissaoValor: rs.reduce((s, r) => s + r.comissaoValor, 0),
-    lucro: rs.reduce((s, r) => s + r.lucro, 0),
-    percentRentabilidade: rs.reduce((s, r) => s + r.percentRentabilidade, 0) / n,
+  let valorEmpresa = 0, comissaoValor = 0, lucro = 0, percentRentabilidade = 0
+  for (const r of rs) {
+    valorEmpresa += r.valorEmpresa ?? 0
+    comissaoValor += r.comissaoValor
+    lucro += r.lucro
+    percentRentabilidade += r.percentRentabilidade
   }
+  return { valorEmpresa, comissaoValor, lucro, percentRentabilidade: percentRentabilidade / n }
 })
 
 // ── Virtual scroll ────────────────────────────────────────────────────────────
@@ -457,15 +464,6 @@ async function salvarModal() {
   showToast('Cotação registrada!')
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────
-
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout>
-function showToast(msg: string) {
-  toastMsg.value = msg; clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 2500)
-}
-
 // ── Teclado global ────────────────────────────────────────────────────────
 
 function globalKeydown(e: KeyboardEvent) {
@@ -483,17 +481,9 @@ function globalKeydown(e: KeyboardEvent) {
 
 function hideAllMenus() { hideCtx(); hideColCtx(); showColRestorePanel.value = false }
 
-async function carregarCotacoes() {
-  carregando.value = true
-  try {
-    const { data } = await api.get(`/cotacoes?situacao=${situacaoFiltro.value}`)
-    rows.splice(0, rows.length, ...data.map(apiToRow))
-  } finally {
-    carregando.value = false
-  }
-}
-
 async function carregarDados() {
+  skeletonCount.value = getRowCache('cotacoes_' + situacaoFiltro.value)
+  rows.splice(0, rows.length)
   carregando.value = true
   try {
     const [cotRes, cliRes, motRes] = await Promise.all([
@@ -502,6 +492,7 @@ async function carregarDados() {
       api.get('/motoristas'),
     ])
     rows.splice(0, rows.length, ...cotRes.data.map(apiToRow))
+    setRowCache('cotacoes_' + situacaoFiltro.value, rows.length)
     clientes.value = cliRes.data
     motoristas.value = motRes.data
   } finally {
@@ -509,7 +500,7 @@ async function carregarDados() {
   }
 }
 
-watch(situacaoFiltro, carregarCotacoes)
+watch(situacaoFiltro, carregarDados)
 
 let resizeObserver: ResizeObserver | null = null
 
@@ -555,6 +546,14 @@ function displayVal(row: Row, col: ColDef): string {
     case 'situacao': return v === 'pendente' ? 'Pendente' : 'Batida'
     default: return v ?? ''
   }
+}
+
+function skBarWidth(col: ColDef): string {
+  if (col.align === 'right') return '55%'
+  if (col.align === 'center') return '30%'
+  if (col.type === 'text') return '75%'
+  if (col.type === 'date') return '45%'
+  return '60%'
 }
 
 const opcoesCliente = computed(() => clientes.value.map(c => ({ label: c.nome, value: c.id })))
@@ -642,6 +641,16 @@ const opcoesMotorista = computed(() => motoristas.value.map(m => ({ label: m.nom
         </thead>
 
         <tbody>
+          <template v-if="carregando && rows.length === 0">
+            <tr v-for="i in skeletonCount" :key="'sk-' + i" class="excel-row skeleton-row">
+              <td class="td-rownum"><div class="skel-bar" style="width:18px;margin:13px auto" /></td>
+              <td v-for="col in visibleCols" :key="col.key" class="excel-td">
+                <div class="skel-bar" :style="{ width: skBarWidth(col) }" />
+              </td>
+              <td class="td-spacer"></td>
+            </tr>
+          </template>
+          <template v-else>
           <tr v-if="topPadding > 0" class="vscroll-pad">
             <td :colspan="visibleCols.length + 2" :style="{ height: topPadding + 'px' }" />
           </tr>
@@ -725,6 +734,7 @@ const opcoesMotorista = computed(() => motoristas.value.map(m => ({ label: m.nom
           <tr v-if="bottomPadding > 0" class="vscroll-pad">
             <td :colspan="visibleCols.length + 2" :style="{ height: bottomPadding + 'px' }" />
           </tr>
+          </template>
         </tbody>
 
         <tfoot>
@@ -791,9 +801,7 @@ const opcoesMotorista = computed(() => motoristas.value.map(m => ({ label: m.nom
   </Teleport>
 
   <!-- ── Toast ─────────────────────────────────────────────────────────── -->
-  <Teleport to="body">
-    <div v-if="toastMsg" class="toast"><i class="pi pi-check-circle" /> {{ toastMsg }}</div>
-  </Teleport>
+
 
   <!-- ── Modal Converter para Carga ────────────────────────────────────── -->
   <Dialog v-model:visible="converterDialog" header="Converter para Carga" :style="{ width: '420px' }" modal :draggable="false">
@@ -1005,6 +1013,20 @@ const opcoesMotorista = computed(() => motoristas.value.map(m => ({ label: m.nom
 .col-restore-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 12px; border: none; background: none; border-radius: 6px; font-size: 13px; cursor: pointer; color: #374151; font-family: inherit; }
 .col-restore-item:hover { background: #f0f4ff; color: #7c3aed; }
 
-.toast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; background: #1e293b; color: white; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); animation: slideUp 0.2s ease; }
-@keyframes slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* ── Skeleton ─────────────────────────────────────────────────── */
+.skeleton-row td { cursor: default !important; }
+.skel-bar {
+  display: block;
+  height: 10px;
+  margin: 13px 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e8edf5 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.5s infinite linear;
+}
+@keyframes skel-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 </style>

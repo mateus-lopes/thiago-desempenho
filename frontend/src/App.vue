@@ -1,13 +1,22 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { useNotifStore } from './stores/notifications'
+import { useToast } from './composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const notifStore = useNotifStore()
+const { toastMsg } = useToast()
 
 const isPublic = computed(() => Boolean(route.meta.public))
+
+// Carrega notificações quando o usuário está autenticado
+watch(() => auth.token, (token) => {
+  if (token) notifStore.carregar()
+}, { immediate: true })
 
 function logout() {
   auth.logout()
@@ -50,26 +59,7 @@ function isActive(item: { to: string; exact?: boolean }) {
 }
 
 // ── Notificações ──────────────────────────────────────────────────────────
-interface Notif { id: number; tipo: 'danger' | 'warn' | 'success'; titulo: string; corpo: string; lida: boolean }
-
 const showNotif = ref(false)
-const notificacoes = ref<Notif[]>([
-  { id: 1, tipo: 'danger',  titulo: 'Ritmo abaixo da meta', corpo: 'FRIBAL está em 34% — faltam 18 dias úteis para fechar julho.', lida: false },
-  { id: 2, tipo: 'warn',    titulo: 'Canhoto pendente', corpo: 'CTE-10008 sem canhoto enviado há 5 dias.', lida: false },
-  { id: 3, tipo: 'warn',    titulo: 'Carga sem atualização', corpo: 'CTE-10009 em andamento há 4 dias sem mudança de status.', lida: false },
-  { id: 4, tipo: 'success', titulo: 'SPAL no ritmo certo!', corpo: 'SPAL atingiu 87% da meta de julho — no caminho certo.', lida: true },
-])
-
-const naoLidas = computed(() => notificacoes.value.filter(n => !n.lida).length)
-
-function marcarLida(id: number) {
-  const n = notificacoes.value.find(n => n.id === id)
-  if (n) n.lida = true
-}
-
-function marcarTodasLidas() {
-  notificacoes.value.forEach(n => { n.lida = true })
-}
 
 function fecharNotif() { showNotif.value = false }
 
@@ -135,23 +125,23 @@ if (typeof window !== 'undefined') {
       <div class="notif-wrap" @click.stop>
         <button class="notif-btn" @click="showNotif = !showNotif" title="Notificações">
           <i class="pi pi-bell" />
-          <span v-if="naoLidas > 0" class="notif-badge">{{ naoLidas }}</span>
+          <span v-if="notifStore.naoLidas > 0" class="notif-badge">{{ notifStore.naoLidas }}</span>
         </button>
 
         <div v-if="showNotif" class="notif-dropdown">
           <div class="notif-header">
             <span>Notificações</span>
-            <button v-if="naoLidas > 0" class="notif-marcar-btn" @click="marcarTodasLidas">
+            <button v-if="notifStore.naoLidas > 0" class="notif-marcar-btn" @click="notifStore.marcarTodasLidas()">
               Marcar todas como lidas
             </button>
           </div>
           <div class="notif-list">
             <div
-              v-for="n in notificacoes"
+              v-for="n in notifStore.notifs"
               :key="n.id"
               class="notif-item"
               :class="[n.tipo, { lida: n.lida }]"
-              @click="marcarLida(n.id)"
+              @click="notifStore.marcarLida(n.id)"
             >
               <div class="notif-dot" :class="n.tipo" />
               <div class="notif-content">
@@ -159,10 +149,21 @@ if (typeof window !== 'undefined') {
                 <div class="notif-corpo">{{ n.corpo }}</div>
               </div>
               <div v-if="!n.lida" class="notif-unread-dot" />
+              <button
+                class="notif-descartar"
+                title="Remover"
+                @click.stop="notifStore.descartar(n.id)"
+              >
+                <i class="pi pi-times" />
+              </button>
             </div>
           </div>
-          <div v-if="notificacoes.length === 0" class="notif-vazia">
-            Nenhuma notificação
+          <div v-if="notifStore.notifs.length === 0" class="notif-vazia">
+            <span v-if="notifStore.carregando">Carregando...</span>
+            <span v-else>Nenhuma notificação ativa</span>
+          </div>
+          <div class="notif-footer" @click="router.push('/notificacoes'); fecharNotif()">
+            <i class="pi pi-history" /> Ver histórico completo
           </div>
         </div>
       </div>
@@ -177,6 +178,12 @@ if (typeof window !== 'undefined') {
       <router-view />
     </main>
   </div>
+
+  <Teleport to="body">
+    <div v-if="toastMsg" class="toast-global">
+      <i class="pi pi-check-circle" /> {{ toastMsg }}
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -312,5 +319,38 @@ if (typeof window !== 'undefined') {
 .notif-vazia {
   padding: 20px; text-align: center;
   font-size: 13px; color: #94a3b8; font-style: italic;
+}
+
+.notif-descartar {
+  flex-shrink: 0; width: 22px; height: 22px;
+  border: none; background: none; cursor: pointer;
+  border-radius: 5px; display: flex; align-items: center; justify-content: center;
+  color: #cbd5e1; font-size: 10px;
+  opacity: 0; transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.notif-item:hover .notif-descartar { opacity: 1; }
+.notif-descartar:hover { background: #fee2e2; color: #ef4444; }
+
+.notif-footer {
+  padding: 10px 16px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 12px; color: #7c3aed; font-weight: 500;
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+  transition: background 0.12s;
+}
+.notif-footer:hover { background: #f3e8ff; }
+
+/* ── Toast global ── */
+.toast-global {
+  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+  background: #1e293b; color: white;
+  padding: 10px 18px; border-radius: 8px;
+  font-size: 13px; display: flex; align-items: center; gap: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  animation: slideUp 0.2s ease;
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 </style>

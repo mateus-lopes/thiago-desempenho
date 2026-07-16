@@ -10,6 +10,7 @@ import { metasRouter } from "./modules/metas/metas.routes";
 import { indicadoresRouter } from "./modules/indicadores/indicadores.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
 import { cotacoesRouter } from "./modules/cotacoes/cotacoes.routes";
+import { notificacoesRouter } from "./modules/notificacoes/notificacoes.routes";
 
 export const app = express();
 
@@ -28,6 +29,7 @@ app.use("/api/metas", metasRouter);
 app.use("/api/indicadores", indicadoresRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/cotacoes", cotacoesRouter);
+app.use("/api/notificacoes", notificacoesRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

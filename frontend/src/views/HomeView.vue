@@ -164,7 +164,7 @@ const chartOption = computed(() => ({
     <div class="wrap" style="position:relative">
       <AppLoader :loading="carregando" />
 
-    <!-- Saudação -->
+    <!-- Saudação + filtros na mesma linha -->
     <div class="greeting-header">
       <div>
         <h1 class="greeting-title">
@@ -173,22 +173,21 @@ const chartOption = computed(() => ({
         </h1>
         <p class="greeting-sub">Aqui está o resumo do desempenho de {{ mesNome }}.</p>
       </div>
-    </div>
 
-    <!-- Seletor de ano + mês -->
-    <div class="periodo-selector" style="margin-bottom: 20px">
-      <div class="ano-toggle">
-        <button class="ano-btn" :class="{ ativo: anoSelecionado === 2025 }" @click="selecionarAno(2025)">2025</button>
-        <button class="ano-btn" :class="{ ativo: anoSelecionado === 2026 }" @click="selecionarAno(2026)">2026</button>
-      </div>
-      <div class="meses-selector">
-        <button
-          v-for="m in meses"
-          :key="m.val"
-          class="mes-btn"
-          :class="{ ativo: mesSelecionado === m.val }"
-          @click="mesSelecionado = m.val"
-        >{{ m.label }}</button>
+      <div class="periodo-selector">
+        <div class="ano-toggle">
+          <button class="ano-btn" :class="{ ativo: anoSelecionado === 2025 }" @click="selecionarAno(2025)">2025</button>
+          <button class="ano-btn" :class="{ ativo: anoSelecionado === 2026 }" @click="selecionarAno(2026)">2026</button>
+        </div>
+        <div class="meses-selector">
+          <button
+            v-for="m in meses"
+            :key="m.val"
+            class="mes-btn"
+            :class="{ ativo: mesSelecionado === m.val }"
+            @click="mesSelecionado = m.val"
+          >{{ m.label }}</button>
+        </div>
       </div>
     </div>
 
@@ -235,24 +234,26 @@ const chartOption = computed(() => ({
     <div class="dash-row cols-2-1">
       <div class="card">
         <div class="card-title">Evolução Acumulada em {{ mesNome }}</div>
-        <VChart :option="chartOption" style="height:210px" autoresize />
+        <VChart :option="chartOption" style="height:300px" autoresize />
       </div>
 
       <div class="card">
         <div class="card-title">Meta por Cliente</div>
-        <div v-for="cl in metaClientes" :key="cl.id" class="meta-item">
-          <div class="meta-header">
-            <span class="meta-cliente">{{ cl.nome }}</span>
-            <span class="meta-valores">{{ BRL(cl.realizado) }} / {{ BRL(cl.meta) }}</span>
+        <div class="scroll-list">
+          <div v-for="cl in metaClientes" :key="cl.id" class="meta-item">
+            <div class="meta-header">
+              <span class="meta-cliente">{{ cl.nome }}</span>
+              <span class="meta-valores">{{ BRL(cl.realizado) }} / {{ BRL(cl.meta) }}</span>
+            </div>
+            <div class="meta-bar">
+              <div
+                class="meta-bar-fill"
+                :class="cl.cor"
+                :style="{ width: Math.min(cl.pct * 100, 100) + '%' }"
+              />
+            </div>
+            <div class="meta-pct" :class="cl.cor">{{ PCT(cl.pct) }}</div>
           </div>
-          <div class="meta-bar">
-            <div
-              class="meta-bar-fill"
-              :class="cl.cor"
-              :style="{ width: Math.min(cl.pct * 100, 100) + '%' }"
-            />
-          </div>
-          <div class="meta-pct" :class="cl.cor">{{ PCT(cl.pct) }}</div>
         </div>
       </div>
     </div>
@@ -261,13 +262,15 @@ const chartOption = computed(() => ({
     <div class="dash-row cols-2">
       <div class="card">
         <div class="card-title">Ranking de Clientes</div>
-        <div v-for="(cl, i) in metaClientes" :key="cl.id" class="ranking-item">
-          <div class="rank-pos" :class="i === 0 ? 'top' : ''">{{ i + 1 }}</div>
-          <div class="rank-nome">{{ cl.nome }}</div>
-          <div class="rank-bar-wrap">
-            <div class="rank-bar-fill" :style="{ width: (cl.realizado / metaClientes[0].realizado * 100) + '%' }" />
+        <div class="scroll-list">
+          <div v-for="(cl, i) in metaClientes" :key="cl.id" class="ranking-item">
+            <div class="rank-pos" :class="i === 0 ? 'top' : ''">{{ i + 1 }}</div>
+            <div class="rank-nome">{{ cl.nome }}</div>
+            <div class="rank-bar-wrap">
+              <div class="rank-bar-fill" :style="{ width: (cl.realizado / metaClientes[0].realizado * 100) + '%' }" />
+            </div>
+            <div class="rank-valor">{{ BRL(cl.realizado) }}</div>
           </div>
-          <div class="rank-valor">{{ BRL(cl.realizado) }}</div>
         </div>
       </div>
 
@@ -307,7 +310,19 @@ const chartOption = computed(() => ({
 .wrap { padding: 0 20px; }
 
 .greeting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 24px;
+}
+
+.periodo-selector {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .greeting-title {
@@ -330,4 +345,14 @@ const chartOption = computed(() => ({
   color: #64748b;
   margin: 0;
 }
+
+.scroll-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.scroll-list::-webkit-scrollbar { width: 4px; }
+.scroll-list::-webkit-scrollbar-track { background: transparent; }
+.scroll-list::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 99px; }
+.scroll-list::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
 </style>

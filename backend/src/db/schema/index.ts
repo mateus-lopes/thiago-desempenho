@@ -5,3 +5,4 @@ export * from "./cargas";
 export * from "./metasMensais";
 export * from "./indicadoresSemanais";
 export * from "./cotacoes";
+export * from "./notificacoes";

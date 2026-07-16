@@ -13,6 +13,16 @@ export const createMotoristaSchema = z.object({
 
 export const updateMotoristaSchema = createMotoristaSchema.partial();
 
+function mapRow(r: typeof motoristas.$inferSelect) {
+  return {
+    id: r.id,
+    nome: r.nome,
+    telefone: r.telefone,
+    percentComissao: Number(r.percentComissao),
+    createdAt: r.createdAt,
+  };
+}
+
 export async function listarMotoristas() {
   const rows = await db
     .select({

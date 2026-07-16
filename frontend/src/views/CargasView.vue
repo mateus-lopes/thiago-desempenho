@@ -8,6 +8,10 @@ import Select from 'primevue/select'
 import DatePicker from 'primevue/datepicker'
 import { api } from '../services/api'
 import AppLoader from '../components/AppLoader.vue'
+import { useToast } from '../composables/useToast'
+import { getRowCache, setRowCache } from '../composables/useRowCache'
+
+const { showToast } = useToast()
 
 // ── Tipos ─────────────────────────────────────────────────────────────────
 
@@ -354,14 +358,48 @@ const cargasFiltradas = computed(() => {
 const totais = computed(() => {
   const rs = cargasFiltradas.value
   const n = rs.length || 1
-  return {
-    valorEmpresa: rs.reduce((s, r) => s + (r.valorEmpresa ?? 0), 0),
-    valorMotorista: rs.reduce((s, r) => s + (r.valorMotorista ?? 0), 0),
-    comissaoValor: rs.reduce((s, r) => s + r.comissaoValor, 0),
-    lucro: rs.reduce((s, r) => s + r.lucro, 0),
-    percentRentabilidade: rs.reduce((s, r) => s + r.percentRentabilidade, 0) / n,
+  let valorEmpresa = 0, valorMotorista = 0, comissaoValor = 0, lucro = 0, percentRentabilidade = 0
+  for (const r of rs) {
+    valorEmpresa += r.valorEmpresa ?? 0
+    valorMotorista += r.valorMotorista ?? 0
+    comissaoValor += r.comissaoValor
+    lucro += r.lucro
+    percentRentabilidade += r.percentRentabilidade
   }
+  return { valorEmpresa, valorMotorista, comissaoValor, lucro, percentRentabilidade: percentRentabilidade / n }
 })
+
+// ── Virtual scroll ────────────────────────────────────────────────────────
+const ROW_HEIGHT = 36
+const BUFFER = 8
+const excelWrap = ref<HTMLElement | null>(null)
+const scrollTopVal = ref(0)
+const viewportHeight = ref(600)
+
+function onScroll() { scrollTopVal.value = excelWrap.value?.scrollTop ?? 0 }
+
+const visibleRange = computed(() => {
+  const count = cargasFiltradas.value.length
+  const visible = Math.ceil(viewportHeight.value / ROW_HEIGHT)
+  const start = Math.max(0, Math.floor(scrollTopVal.value / ROW_HEIGHT) - BUFFER)
+  const end = Math.min(count, start + visible + BUFFER * 2)
+  return { start, end }
+})
+
+const visibleRows = computed(() => cargasFiltradas.value.slice(visibleRange.value.start, visibleRange.value.end))
+const topPadding = computed(() => visibleRange.value.start * ROW_HEIGHT)
+const bottomPadding = computed(() => (cargasFiltradas.value.length - visibleRange.value.end) * ROW_HEIGHT)
+
+function scrollRowIntoView(rowIdx: number) {
+  const wrap = excelWrap.value
+  if (!wrap) return
+  const rowTop = rowIdx * ROW_HEIGHT
+  const rowBottom = rowTop + ROW_HEIGHT
+  const viewTop = wrap.scrollTop
+  const viewBottom = viewTop + viewportHeight.value
+  if (rowTop < viewTop) { wrap.scrollTop = Math.max(0, rowTop - BUFFER * ROW_HEIGHT); scrollTopVal.value = wrap.scrollTop }
+  else if (rowBottom > viewBottom) { wrap.scrollTop = rowBottom - viewportHeight.value + BUFFER * ROW_HEIGHT; scrollTopVal.value = wrap.scrollTop }
+}
 
 // ── Operações de linha ─────────────────────────────────────────────────────
 
@@ -501,15 +539,6 @@ async function ctxSetStatus(status: 'entregue' | 'em_andamento') {
   hideCtx()
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────
-
-const toastMsg = ref('')
-let toastTimer: ReturnType<typeof setTimeout>
-function showToast(msg: string) {
-  toastMsg.value = msg
-  clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastMsg.value = '' }, 2200)
-}
 
 // ── Teclado global ────────────────────────────────────────────────────────
 
@@ -561,8 +590,11 @@ function selecionarAno(ano: number) {
 }
 
 const carregando = ref(false)
+const skeletonCount = ref(getRowCache('cargas_' + mesSelecionadoStr.value))
 
 async function carregarDados() {
+  skeletonCount.value = getRowCache('cargas_' + mesSelecionadoStr.value)
+  rows.splice(0, rows.length)
   carregando.value = true
   try {
     const [cargasRes, clientesRes, motoristasRes] = await Promise.all([
@@ -571,6 +603,7 @@ async function carregarDados() {
       api.get('/motoristas'),
     ])
     rows.splice(0, rows.length, ...(cargasRes.data as any[]).map(apiToRow))
+    setRowCache('cargas_' + mesSelecionadoStr.value, rows.length)
     clientes.value = clientesRes.data
     motoristas.value = motoristasRes.data
   } finally {
@@ -595,14 +628,24 @@ async function toggleCanhoto(row: Row) {
 
 watch(mesSelecionado, carregarDados)
 
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(() => {
   document.addEventListener('keydown', globalKeydown)
   document.addEventListener('click', hideAllMenus)
   carregarDados()
+  nextTick(() => {
+    if (excelWrap.value) {
+      viewportHeight.value = excelWrap.value.clientHeight
+      resizeObserver = new ResizeObserver(() => { viewportHeight.value = excelWrap.value?.clientHeight ?? 600 })
+      resizeObserver.observe(excelWrap.value)
+    }
+  })
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', globalKeydown)
   document.removeEventListener('click', hideAllMenus)
+  resizeObserver?.disconnect()
 })
 
 // ── Formatação / Display ──────────────────────────────────────────────────
@@ -629,6 +672,14 @@ function displayVal(row: Row, col: ColDef): string {
     case 'checkbox': return v ? 'Sim' : 'Não'
     default: return v ?? ''
   }
+}
+
+function skBarWidth(col: ColDef): string {
+  if (col.align === 'right') return '55%'
+  if (col.align === 'center') return '30%'
+  if (col.type === 'text') return '75%'
+  if (col.type === 'date') return '45%'
+  return '60%'
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────
@@ -779,7 +830,7 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
     </div>
 
     <!-- Tabela Excel -->
-    <div class="excel-wrap" @click.stop>
+    <div ref="excelWrap" class="excel-wrap" @click.stop @scroll="onScroll">
       <table class="excel-table" :class="{ 'wrap-text': wrapText }" :style="{ width: totalTableWidth + 'px' }">
         <thead>
           <!-- Cabeçalho com sort -->
@@ -856,8 +907,21 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
         </thead>
 
         <tbody>
+          <template v-if="carregando && rows.length === 0">
+            <tr v-for="i in skeletonCount" :key="'sk-' + i" class="excel-row skeleton-row">
+              <td class="td-rownum"><div class="skel-bar" style="width:18px;margin:13px auto" /></td>
+              <td v-for="col in visibleCols" :key="col.key" class="excel-td">
+                <div class="skel-bar" :style="{ width: skBarWidth(col) }" />
+              </td>
+              <td class="td-spacer"></td>
+            </tr>
+          </template>
+          <template v-else>
+          <tr v-if="topPadding > 0" class="vscroll-pad">
+            <td :colspan="visibleCols.length + 2" :style="{ height: topPadding + 'px' }" />
+          </tr>
           <tr
-            v-for="(row, rowIdx) in cargasFiltradas"
+            v-for="(row, rowIdx) in visibleRows"
             :key="row.id"
             class="excel-row"
             :class="{
@@ -879,7 +943,7 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
               title="Arraste para reordenar · botão direito para mais opções"
             >
               <i class="pi pi-bars drag-icon" />
-              <span class="row-num">{{ rowIdx + 1 }}</span>
+              <span class="row-num">{{ visibleRange.start + rowIdx + 1 }}</span>
             </td>
 
             <td
@@ -970,6 +1034,10 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
             </td>
             <td class="td-spacer"></td>
           </tr>
+          <tr v-if="bottomPadding > 0" class="vscroll-pad">
+            <td :colspan="visibleCols.length + 2" :style="{ height: bottomPadding + 'px' }" />
+          </tr>
+          </template>
         </tbody>
 
         <!-- Totais -->
@@ -1097,13 +1165,6 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
     </div>
   </Teleport>
 
-  <!-- ── Toast ──────────────────────────────────────────────────────────── -->
-  <Teleport to="body">
-    <div v-if="toastMsg" class="toast">
-      <i class="pi pi-check-circle" /> {{ toastMsg }}
-    </div>
-  </Teleport>
-
   <!-- ── Modal Nova Carga ────────────────────────────────────────────────── -->
   <Dialog v-model:visible="dialogAberto" header="Nova Carga" :style="{ width: '780px' }" modal :draggable="false">
     <div class="form-2col">
@@ -1159,6 +1220,8 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
 </template>
 
 <style scoped>
+.vscroll-pad td { border: none !important; padding: 0 !important; background: white !important; pointer-events: none; }
+
 /* ── Toolbar ─────────────────────────────────────────────────── */
 .toolbar-btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1407,17 +1470,20 @@ const opcoesFormaPagamento = ['Boleto', 'PIX', 'Transferência'].map(v => ({ lab
 }
 .col-restore-item:hover { background: #f0f4ff; color: #7c3aed; }
 
-/* ── Toast ───────────────────────────────────────────────────── */
-.toast {
-  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
-  background: #1e293b; color: white;
-  padding: 10px 18px; border-radius: 8px;
-  font-size: 13px; display: flex; align-items: center; gap: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-  animation: slideUp 0.2s ease;
+/* ── Skeleton ─────────────────────────────────────────────────── */
+.skeleton-row td { cursor: default !important; }
+.skel-bar {
+  display: block;
+  height: 10px;
+  margin: 13px 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e8edf5 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.5s infinite linear;
 }
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+@keyframes skel-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
 }
+
 </style>
