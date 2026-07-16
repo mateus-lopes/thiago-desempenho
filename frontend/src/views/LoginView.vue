@@ -117,6 +117,7 @@ async function entrar() {
   flex: 1;
   background: #f1f5f9;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 24px;
