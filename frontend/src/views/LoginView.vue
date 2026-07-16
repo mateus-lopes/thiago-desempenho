@@ -117,10 +117,10 @@ async function entrar() {
   flex: 1;
   background: #f1f5f9;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 24px;
+  position: relative;
 }
 
 .login-card {
@@ -273,11 +273,15 @@ label {
 
 /* ── Autoria ── */
 .autoria {
-  margin-top: 20px;
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .autoria-label {
