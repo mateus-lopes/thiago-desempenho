@@ -83,7 +83,7 @@ if (typeof window !== 'undefined') {
 
     <header class="topbar">
       <div class="topbar-brand">
-        <span class="dev-badge"><i class="pi pi-wrench" /> Em desenvolvimento</span>
+        <span class="dev-badge"><i class="pi pi-wrench" /> Em fase de testes</span>
       </div>
 
       <nav class="topbar-nav">
