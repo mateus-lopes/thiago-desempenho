@@ -31,9 +31,9 @@ authRouter.post("/login", loginLimiter, async (req, res) => {
   }
 
   try {
-    const token = await login(email, senha);
+    const { token, role } = await login(email, senha);
     res.cookie("auth_token", token, cookieOptions);
-    res.json({ ok: true });
+    res.json({ ok: true, role });
   } catch {
     res.status(401).json({ error: "Email ou senha inválidos" });
   }

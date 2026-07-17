@@ -18,8 +18,8 @@ async function entrar() {
   carregando.value = true;
 
   try {
-    await api.post("/auth/login", { email: email.value, senha: senha.value });
-    await auth.checkSession();
+    const { data } = await api.post("/auth/login", { email: email.value, senha: senha.value });
+    auth.setAuthenticated(data.role);
     router.push("/");
   } catch {
     erro.value = "Email ou senha inválidos.";
