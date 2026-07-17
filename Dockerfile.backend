@@ -21,7 +21,7 @@ COPY backend/tsconfig.json ./backend/
 
 RUN pnpm --filter @thiago/core build && \
     pnpm --filter @thiago/backend build && \
-    pnpm deploy --filter @thiago/backend --prod /app/standalone
+    pnpm deploy --filter @thiago/backend --prod --legacy /app/standalone
 
 # ---
 
