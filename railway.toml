@@ -1,0 +1,13 @@
+# Serviço: backend
+# No dashboard do Railway: Settings > Build > Builder = Dockerfile, Path = Dockerfile.backend
+# Variáveis obrigatórias: DATABASE_URL, JWT_SECRET, CORS_ORIGIN, NODE_ENV=production
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.backend"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
